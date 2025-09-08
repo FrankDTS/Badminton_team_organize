@@ -219,4 +219,15 @@ export function RotationManager() {
                             <ArrowDown className="w-4 h-4" />
                           </Button>
                         </div>
-                      </div>\
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+    </div>
+  )
+}

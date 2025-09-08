@@ -6,13 +6,14 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { MapPin, Play, Users, Settings } from "lucide-react"
+import { MapPin, Play, Users, Settings, Loader2 } from "lucide-react"
 import { useAppContext } from "@/lib/app-context"
 import { TeamAllocationAlgorithm } from "@/lib/team-allocation-algorithm"
 
 export function CourtDisplay() {
   const { state, dispatch } = useAppContext()
   const [courtCount, setCourtCount] = useState(state.courts.length)
+  const [loadingCourts, setLoadingCourts] = useState<Set<string>>(new Set())
   const algorithm = new TeamAllocationAlgorithm()
 
   const updateCourtCount = () => {
@@ -31,11 +32,14 @@ export function CourtDisplay() {
     dispatch({ type: "SET_COURTS", payload: newCourts })
   }
 
-  const handleNextRoundForCourt = (courtId: string) => {
+  const handleNextRoundForCourt = async (courtId: string) => {
     if (state.participants.length < 4) {
       alert("至少需要4名參與者才能開始遊戲")
       return
     }
+
+    // Add loading state
+    setLoadingCourts(prev => new Set(prev).add(courtId))
 
     // 檢查該場地是否已有分配
     const existingCourtAllocation = state.currentAllocations.find(alloc => alloc.courtId === courtId)
@@ -93,6 +97,15 @@ export function CourtDisplay() {
     ]
     
     dispatch({ type: "SET_ALLOCATIONS", payload: updatedAllocations })
+
+    // Simulate brief loading for better UX feedback
+    setTimeout(() => {
+      setLoadingCourts(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(courtId)
+        return newSet
+      })
+    }, 300)
   }
 
   const getSkillLevelColor = (level: number) => {
@@ -184,11 +197,15 @@ export function CourtDisplay() {
                   </span>
                   <Button
                     onClick={() => handleNextRoundForCourt(court.id)}
-                    className="flex items-center gap-2"
-                    disabled={state.participants.length < 4}
+                    className="flex items-center gap-2 transition-all duration-200 active:scale-95 hover:shadow-md"
+                    disabled={state.participants.length < 4 || loadingCourts.has(court.id)}
                   >
-                    <Play className="w-4 h-4" />
-                    {courtAllocation ? '下一輪' : '開始分隊'}
+                    {loadingCourts.has(court.id) ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Play className="w-4 h-4" />
+                    )}
+                    {loadingCourts.has(court.id) ? '處理中...' : (courtAllocation ? '下一輪' : '開始分隊')}
                   </Button>
                 </CardTitle>
               </CardHeader>
@@ -316,7 +333,7 @@ export function CourtDisplay() {
                   <div>
                     <span className="font-medium">{participant.name}</span>
                     <div className="flex items-center gap-1 mt-1">
-                      <Badge className={getSkillLevelColor(participant.skillLevel)} size="sm">
+                      <Badge className={`text-xs ${getSkillLevelColor(participant.skillLevel)}`}>
                         {participant.skillLevel}級
                       </Badge>
                     </div>

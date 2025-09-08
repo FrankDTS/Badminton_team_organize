@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { Shuffle, Users, AlertCircle, TrendingUp, BarChart3, CheckCircle, XCircle } from "lucide-react"
+import { Shuffle, Users, AlertCircle, TrendingUp, BarChart3, CheckCircle, XCircle, Loader2 } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useAppContext } from "@/lib/app-context"
 import { TeamAllocationAlgorithm } from "@/lib/team-allocation-algorithm"
@@ -13,6 +13,7 @@ import { TeamAllocationAlgorithm } from "@/lib/team-allocation-algorithm"
 export function TeamAllocation() {
   const { state, dispatch } = useAppContext()
   const [isAllocating, setIsAllocating] = useState(false)
+  const [isProcessingNextRound, setIsProcessingNextRound] = useState(false)
   const [allocationStats, setAllocationStats] = useState<any>(null)
   const [validationResults, setValidationResults] = useState<any[]>([])
 
@@ -50,10 +51,16 @@ export function TeamAllocation() {
     }
   }
 
-  const handleNextRound = () => {
-    dispatch({ type: "NEXT_ROUND" })
-    setAllocationStats(null)
-    setValidationResults([])
+  const handleNextRound = async () => {
+    setIsProcessingNextRound(true)
+    
+    // Simulate brief processing time for better UX feedback
+    setTimeout(() => {
+      dispatch({ type: "NEXT_ROUND" })
+      setAllocationStats(null)
+      setValidationResults([])
+      setIsProcessingNextRound(false)
+    }, 400)
   }
 
   const handleResetGame = () => {
@@ -144,8 +151,21 @@ export function TeamAllocation() {
 
               {state.currentAllocations.length > 0 && (
                 <>
-                  <Button onClick={handleNextRound} variant="outline" size="lg">
-                    下一輪
+                  <Button 
+                    onClick={handleNextRound} 
+                    variant="outline" 
+                    size="lg"
+                    className="transition-all duration-200 active:scale-95 hover:shadow-md"
+                    disabled={isProcessingNextRound}
+                  >
+                    {isProcessingNextRound ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        處理中...
+                      </>
+                    ) : (
+                      '下一輪'
+                    )}
                   </Button>
                   <Button onClick={handleResetGame} variant="outline" size="lg">
                     重設
