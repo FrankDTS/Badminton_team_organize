@@ -7,7 +7,7 @@ interface AllocationConstraints {
 
 interface PlayerWithPriority extends Participant {
   priority: number // Lower number = higher priority to play
-  rotationScore: number // 添加轮换评分
+  rotationScore: number // 添加輪換評分
 }
 
 export class TeamAllocationAlgorithm {
@@ -17,11 +17,11 @@ export class TeamAllocationAlgorithm {
   }
 
   /**
-   * 智能分队算法主函数（支持轮换）
-   * @param participants 所有参与者
-   * @param courts 可用场地
-   * @param gameNumber 当前轮次
-   * @returns 分队结果
+   * 智能分隊算法主函數（支持輪換）
+   * @param participants 所有參與者
+   * @param courts 可用場地
+   * @param gameNumber 當前輪次
+   * @returns 分隊結果
    */
   public allocateTeams(participants: Participant[], courts: Court[], gameNumber: number): GameAllocation[] {
     const activeCourts = courts.filter((court) => court.isActive)
@@ -32,60 +32,60 @@ export class TeamAllocationAlgorithm {
 
     const playersWithPriority = this.calculateRotationPriorities(participants, gameNumber)
 
-    // 按轮换优先级和技能等级排序
+    // 按輪換優先級和技能等級排序
     const sortedPlayers = this.sortPlayersByRotationAndSkill(playersWithPriority)
 
-    // 执行分队
+    // 執行分隊
     const allocations = this.performAllocation(sortedPlayers, activeCourts, gameNumber)
 
     return allocations
   }
 
   /**
-   * 计算参与者轮换优先级（替换原来的calculatePlayerPriorities）
+   * 計算參與者輪換優先級（替換原來的calculatePlayerPriorities）
    */
   private calculateRotationPriorities(participants: Participant[], currentRound: number): PlayerWithPriority[] {
     const minGamesPlayed = Math.min(...participants.map((p) => p.gamesPlayed))
     const maxLastPlayedRound = Math.max(...participants.map((p) => p.lastPlayedRound))
 
     return participants.map((participant) => {
-      // 基础优先级：参与场次差距
+      // 基础優先級：參與場次差距
       const gamesPriorityScore = participant.gamesPlayed - minGamesPlayed
 
-      // 轮换优先级：距离上次参与的轮次数
+      // 輪換優先級：距離上次參與的輪次數
       const roundsSinceLastPlayed = currentRound - participant.lastPlayedRound
       const rotationPriorityScore = maxLastPlayedRound > 0 ? -roundsSinceLastPlayed : 0
 
-      // 手动调整的优先级
+      // 手動調整的優先級
       const manualPriorityScore = participant.rotationPriority * 0.1
 
-      // 综合轮换评分（越小优先级越高）
+      // 綜合輪換評分（越小優先級越高）
       const rotationScore = gamesPriorityScore + rotationPriorityScore + manualPriorityScore
 
       return {
         ...participant,
-        priority: gamesPriorityScore, // 保持原有逻辑兼容性
+        priority: gamesPriorityScore, // 保持原有邏輯相容性
         rotationScore,
       }
     })
   }
 
   /**
-   * 按轮换优先级和技能等级排序参与者
+   * 按輪換優先級和技能等級排序參與者
    */
   private sortPlayersByRotationAndSkill(players: PlayerWithPriority[]): PlayerWithPriority[] {
     return players.sort((a, b) => {
-      // 首先按轮换评分排序（轮换优先级）
+      // 首先按輪換評分排序（輪換優先級）
       if (a.rotationScore !== b.rotationScore) {
         return a.rotationScore - b.rotationScore
       }
-      // 然后按技能等级排序，便于后续匹配
+      // 然後按技能等級排序，便於後續匹配
       return a.skillLevel - b.skillLevel
     })
   }
 
   /**
-   * 执行分队分配
+   * 執行分隊分配
    */
   private performAllocation(
     sortedPlayers: PlayerWithPriority[],
@@ -97,13 +97,13 @@ export class TeamAllocationAlgorithm {
 
     for (const court of courts) {
       if (availablePlayers.length < this.constraints.playersPerCourt) {
-        break // 剩余人数不足一个场地
+        break // 剩餘人數不足一個場地
       }
 
       const courtPlayers = this.selectPlayersForCourt(availablePlayers)
 
       if (courtPlayers.length === this.constraints.playersPerCourt) {
-        // 从可用列表中移除已分配的参与者
+        // 從可用列表中移除已分配的參與者
         courtPlayers.forEach((player) => {
           const index = availablePlayers.findIndex((p) => p.id === player.id)
           if (index > -1) {
@@ -127,7 +127,7 @@ export class TeamAllocationAlgorithm {
   }
 
   /**
-   * 为单个场地选择参与者
+   * 為單個場地選擇參與者
    */
   private selectPlayersForCourt(availablePlayers: PlayerWithPriority[]): Participant[] {
     if (availablePlayers.length < this.constraints.playersPerCourt) {
@@ -137,11 +137,11 @@ export class TeamAllocationAlgorithm {
     const selectedPlayers: Participant[] = []
     const remainingPlayers = [...availablePlayers]
 
-    // 选择第一个参与者（优先级最高的）
+    // 選擇第一個參與者（優先級最高的）
     const firstPlayer = remainingPlayers.shift()!
     selectedPlayers.push(firstPlayer)
 
-    // 为剩余位置选择合适的参与者
+    // 為剩餘位置選擇合適的參與者
     while (selectedPlayers.length < this.constraints.playersPerCourt && remainingPlayers.length > 0) {
       const nextPlayer = this.findBestMatchingPlayer(selectedPlayers, remainingPlayers)
 
@@ -150,7 +150,7 @@ export class TeamAllocationAlgorithm {
         const index = remainingPlayers.findIndex((p) => p.id === nextPlayer.id)
         remainingPlayers.splice(index, 1)
       } else {
-        // 如果找不到合适的匹配，选择优先级最高的剩余参与者
+        // 如果找不到合適的匹配，選擇優先級最高的剩餘參與者
         const fallbackPlayer = remainingPlayers.shift()!
         selectedPlayers.push(fallbackPlayer)
       }
@@ -160,7 +160,7 @@ export class TeamAllocationAlgorithm {
   }
 
   /**
-   * 找到最佳匹配的参与者
+   * 找到最佳匹配的參與者
    */
   private findBestMatchingPlayer(
     selectedPlayers: Participant[],
@@ -170,7 +170,7 @@ export class TeamAllocationAlgorithm {
     const minSkill = Math.min(...currentSkillLevels)
     const maxSkill = Math.max(...currentSkillLevels)
 
-    // 寻找技能等级在允许范围内的参与者
+    // 尋找技能等級在允許範圍內的參與者
     const suitablePlayers = remainingPlayers.filter((player) => {
       const wouldBeMinSkill = Math.min(minSkill, player.skillLevel)
       const wouldBeMaxSkill = Math.max(maxSkill, player.skillLevel)
@@ -181,12 +181,12 @@ export class TeamAllocationAlgorithm {
       return null
     }
 
-    // 在合适的参与者中选择优先级最高的（参与场次最少的）
+    // 在合適的參與者中選擇優先級最高的（參與場次最少的）
     return suitablePlayers.reduce((best, current) => (current.priority < best.priority ? current : best))
   }
 
   /**
-   * 验证分队结果是否符合约束条件
+   * 驗證分隊結果是否符合約束条件
    */
   public validateAllocation(allocation: GameAllocation): {
     isValid: boolean
@@ -194,19 +194,19 @@ export class TeamAllocationAlgorithm {
   } {
     const violations: string[] = []
 
-    // 检查人数
+    // 檢查人數
     if (allocation.players.length !== this.constraints.playersPerCourt) {
-      violations.push(`场地人数不正确: ${allocation.players.length}/4`)
+      violations.push(`場地人數不正確: ${allocation.players.length}/4`)
     }
 
-    // 检查技能等级差距
+    // 檢查技能等級差距
     const skillLevels = allocation.players.map((p) => p.skillLevel)
     const minSkill = Math.min(...skillLevels)
     const maxSkill = Math.max(...skillLevels)
     const skillDifference = maxSkill - minSkill
 
     if (skillDifference > this.constraints.maxSkillLevelDifference) {
-      violations.push(`技能等级差距过大: ${skillDifference} (最大允许: ${this.constraints.maxSkillLevelDifference})`)
+      violations.push(`技能等級差距過大: ${skillDifference} (最大允許: ${this.constraints.maxSkillLevelDifference})`)
     }
 
     return {
@@ -216,7 +216,7 @@ export class TeamAllocationAlgorithm {
   }
 
   /**
-   * 获取分队统计信息
+   * 獲取分隊統計信息
    */
   public getAllocationStats(allocations: GameAllocation[]): {
     totalPlayers: number
@@ -243,12 +243,12 @@ export class TeamAllocationAlgorithm {
       skillLevelDistribution[player.skillLevel] = (skillLevelDistribution[player.skillLevel] || 0) + 1
     })
 
-    // 计算平衡分数（各场地平均技能等级的标准差，越小越平衡）
+    // 計算平衡分數（各場地平均技能等級的標準差，越小越平衡）
     const courtAverages = allocations.map((a) => a.averageSkillLevel)
     const overallAverage = courtAverages.reduce((sum, avg) => sum + avg, 0) / courtAverages.length
     const variance =
       courtAverages.reduce((sum, avg) => sum + Math.pow(avg - overallAverage, 2), 0) / courtAverages.length
-    const balanceScore = Math.round((10 - Math.sqrt(variance)) * 10) / 10 // 10分制，分数越高越平衡
+    const balanceScore = Math.round((10 - Math.sqrt(variance)) * 10) / 10 // 10分制，分數越高越平衡
 
     return {
       totalPlayers,
@@ -259,7 +259,7 @@ export class TeamAllocationAlgorithm {
   }
 
   /**
-   * 预测下次轮换安排
+   * 預測下次輪換安排
    */
   public predictNextRotation(
     participants: Participant[],
@@ -281,14 +281,14 @@ export class TeamAllocationAlgorithm {
       }
     }
 
-    // 计算轮换优先级
+    // 計算輪換優先級
     const playersWithPriority = this.calculateRotationPriorities(participants, currentRound + 1)
     const sortedPlayers = this.sortPlayersByRotationAndSkill(playersWithPriority)
 
     const nextUpPlayers = sortedPlayers.slice(0, maxPlayersPerRound)
     const waitingPlayers = sortedPlayers.slice(maxPlayersPerRound)
 
-    // 估算等待轮次
+    // 估算等待輪次
     const estimatedWaitRounds: { [participantId: string]: number } = {}
     waitingPlayers.forEach((player, index) => {
       const position = index + 1
@@ -304,7 +304,7 @@ export class TeamAllocationAlgorithm {
   }
 
   /**
-   * 获取轮换统计信息
+   * 獲取輪換統計信息
    */
   public getRotationStats(
     participants: Participant[],
@@ -329,16 +329,16 @@ export class TeamAllocationAlgorithm {
     const maxGames = Math.max(...gamesPlayed)
     const maxGamesDifference = maxGames - minGames
 
-    // 公平性评分（10分制，差距越小分数越高）
+    // 公平性評分（10分制，差距越小分數越高）
     const fairnessScore = Math.max(0, 10 - maxGamesDifference * 2)
 
-    // 平均等待时间（轮次）
+    // 平均等待時間（輪次）
     const averageWaitTime =
       participants.reduce((sum, p) => {
         return sum + (currentRound - p.lastPlayedRound)
       }, 0) / participants.length
 
-    // 轮换效率（基于参与者分布的均匀程度）
+    // 輪換效率（基於參與者分佈的均匀程度）
     const totalGames = gamesPlayed.reduce((sum, games) => sum + games, 0)
     const expectedGamesPerPlayer = totalGames / participants.length
     const variance =

@@ -4,13 +4,27 @@ import { GeistSans } from "geist/font/sans"
 import { GeistMono } from "geist/font/mono"
 import { Analytics } from "@vercel/analytics/next"
 import { AppProvider } from "@/lib/app-context"
+import { validateEnvironmentVariables } from "@/lib/security"
 import { Suspense } from "react"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "羽球分队管理系统",
-  description: "智能羽毛球分队管理应用",
+  title: "羽球分隊管理系統",
+  description: "智慧羽毛球分隊管理應用",
   generator: "v0.app",
+  other: {
+    'X-Frame-Options': 'DENY',
+    'X-Content-Type-Options': 'nosniff',
+  },
+}
+
+// Initialize security validation
+if (typeof window === 'undefined') {
+  try {
+    validateEnvironmentVariables()
+  } catch (error) {
+    console.error('Environment validation failed:', error)
+  }
 }
 
 export default function RootLayout({

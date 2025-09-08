@@ -10,7 +10,7 @@ export default function Home() {
       <div className="container mx-auto px-4 py-8">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-foreground mb-2">羽球分隊管理系統</h1>
-          <p className="text-muted-foreground text-lg">智慧分隊，公平競技，讓每場比賽都精彩</p>
+          <p className="text-muted-foreground text-lg">羽球分隊系統</p>
         </div>
 
         <Tabs defaultValue="participants" className="w-full">

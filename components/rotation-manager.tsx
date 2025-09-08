@@ -57,9 +57,9 @@ export function RotationManager() {
       <Card>
         <CardContent className="text-center py-8">
           <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
-          <p className="text-muted-foreground mb-2">当前不需要轮换</p>
+          <p className="text-muted-foreground mb-2">當前不需要輪換</p>
           <p className="text-sm text-muted-foreground">
-            参与者数量 ({state.participants.length}) 未超过场地容量 ({maxPlayersPerRound})
+            參與者數量 ({state.participants.length}) 未超過場地容量 ({maxPlayersPerRound})
           </p>
         </CardContent>
       </Card>
@@ -97,7 +97,7 @@ export function RotationManager() {
 
               <div className="text-center">
                 <div className="text-2xl font-bold text-primary">{rotationStats.maxGamesDifference}</div>
-                <div className="text-sm text-muted-foreground">最大场次差距</div>
+                <div className="text-sm text-muted-foreground">最大場次差距</div>
               </div>
 
               <div className="text-center">
@@ -170,7 +170,7 @@ export function RotationManager() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Clock className="w-5 h-5" />
-                轮空队列
+                輪空隊列
                 <Badge variant="secondary">{rotationPrediction.waitingPlayers.length} 人</Badge>
               </CardTitle>
             </CardHeader>

@@ -8,8 +8,8 @@ export interface Participant {
   name: string
   skillLevel: number
   gamesPlayed: number
-  lastPlayedRound: number // 添加最后参与轮次记录
-  rotationPriority: number // 添加轮换优先级
+  lastPlayedRound: number // 添加最後參與輪次記錄
+  rotationPriority: number // 添加輪換優先級
 }
 
 export interface Court {
@@ -43,7 +43,7 @@ interface AppState {
   currentAllocations: GameAllocation[]
   gameHistory: GameAllocation[][]
   currentRound: number
-  rotationQueue: RotationQueue // 添加轮换队列状态
+  rotationQueue: RotationQueue // 添加輪換隊列狀態
 }
 
 type AppAction =
@@ -54,22 +54,22 @@ type AppAction =
   | { type: "SET_COURTS"; payload: Court[] }
   | { type: "UPDATE_COURT"; payload: Court }
   | { type: "SET_ALLOCATIONS"; payload: GameAllocation[] }
-  | { type: "UPDATE_ROTATION_QUEUE"; payload: RotationQueue } // 添加轮换队列更新
-  | { type: "ADJUST_ROTATION_PRIORITY"; payload: { participantId: string; newPriority: number } } // 添加手动调整轮换优先级
+  | { type: "UPDATE_ROTATION_QUEUE"; payload: RotationQueue } // 添加輪換隊列更新
+  | { type: "ADJUST_ROTATION_PRIORITY"; payload: { participantId: string; newPriority: number } } // 添加手動調整輪換優先級
   | { type: "NEXT_ROUND" }
   | { type: "RESET_GAME" }
 
 const initialState: AppState = {
   participants: [],
   courts: [
-    { id: "1", name: "场地 1", isActive: true, currentPlayers: [] },
-    { id: "2", name: "场地 2", isActive: true, currentPlayers: [] },
+    { id: "1", name: "場地 1", isActive: true, currentPlayers: [] },
+    { id: "2", name: "場地 2", isActive: true, currentPlayers: [] },
   ],
   currentAllocations: [],
   gameHistory: [],
   currentRound: 1,
   rotationQueue: {
-    // 初始化轮换队列
+    // 初始化輪換隊列
     waitingPlayers: [],
     nextUpPlayers: [],
     rotationHistory: [],
@@ -85,7 +85,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
           ...state.participants,
           {
             ...action.payload,
-            lastPlayedRound: 0, // 初始化新参与者的轮换相关字段
+            lastPlayedRound: 0, // 初始化新參與者的輪換相關字段
             rotationPriority: state.participants.length,
           },
         ],
@@ -141,12 +141,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
           ],
         },
       }
-    case "UPDATE_ROTATION_QUEUE": // 处理轮换队列更新
+    case "UPDATE_ROTATION_QUEUE": // 處理輪換隊列更新
       return {
         ...state,
         rotationQueue: action.payload,
       }
-    case "ADJUST_ROTATION_PRIORITY": // 处理手动调整轮换优先级
+    case "ADJUST_ROTATION_PRIORITY": // 處理手動調整輪換優先級
       return {
         ...state,
         participants: state.participants.map((p) =>
@@ -182,7 +182,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
         participants: state.participants.map((p) => ({
           ...p,
           gamesPlayed: 0,
-          lastPlayedRound: 0, // 重置轮换相关字段
+          lastPlayedRound: 0, // 重置輪換相關字段
           rotationPriority: p.rotationPriority,
         })),
       }

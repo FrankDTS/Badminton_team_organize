@@ -25,19 +25,19 @@ export function TeamAllocation() {
 
     setIsAllocating(true)
 
-    // 模拟处理时间
+    // 模擬處理時間
     await new Promise((resolve) => setTimeout(resolve, 1500))
 
     try {
       const allocations = algorithm.allocateTeams(state.participants, state.courts, state.currentRound)
 
-      // 验证分队结果
+      // 驗證分隊結果
       const validations = allocations.map((allocation) => ({
         courtId: allocation.courtId,
         ...algorithm.validateAllocation(allocation),
       }))
 
-      // 计算统计信息
+      // 計算統計信息
       const stats = algorithm.getAllocationStats(allocations)
 
       dispatch({ type: "SET_ALLOCATIONS", payload: allocations })

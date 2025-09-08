@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Trash2, Plus, User, Edit, Check, X, UserX } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useAppContext, type Participant } from "@/lib/app-context"
+import { sanitizeParticipantData, participantSchema } from "@/lib/security"
 
 export function ParticipantManager() {
   const { state, dispatch } = useAppContext()
@@ -16,18 +17,41 @@ export function ParticipantManager() {
   const [newSkillLevel, setNewSkillLevel] = useState<number>(5)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editSkillLevel, setEditSkillLevel] = useState<number>(5)
+  const [error, setError] = useState<string>("")
 
   const addParticipant = () => {
-    if (newName.trim()) {
+    setError("")
+    
+    if (!newName.trim()) {
+      setError("請輸入參與者姓名")
+      return
+    }
+    
+    try {
+      const sanitizedData = sanitizeParticipantData({
+        name: newName,
+        skillLevel: newSkillLevel
+      })
+      
+      const validatedData = participantSchema.parse(sanitizedData)
+      
       const newParticipant: Participant = {
         id: Date.now().toString(),
-        name: newName.trim(),
-        skillLevel: newSkillLevel,
+        name: validatedData.name,
+        skillLevel: validatedData.skillLevel,
         gamesPlayed: 0,
       }
       dispatch({ type: "ADD_PARTICIPANT", payload: newParticipant })
       setNewName("")
       setNewSkillLevel(5)
+      setError("")
+    } catch (error: any) {
+      if (error.errors && error.errors.length > 0) {
+        setError(error.errors[0].message)
+      } else {
+        setError("新增參與者時發生錯誤，請檢查輸入資料")
+      }
+      console.error('Invalid participant data:', error)
     }
   }
 
@@ -93,9 +117,16 @@ export function ParticipantManager() {
                 id="name"
                 placeholder="輸入參與者姓名"
                 value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyPress={(e) => e.key === "Enter" && addParticipant()}
+                onChange={(e) => {
+                  setNewName(e.target.value)
+                  if (error) setError("")
+                }}
+                onKeyDown={(e) => e.key === "Enter" && addParticipant()}
+                className={error ? "border-red-500" : ""}
               />
+              {error && (
+                <p className="text-sm text-red-600 mt-1">{error}</p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="skill-level">能力等級</Label>
