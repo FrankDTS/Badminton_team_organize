@@ -30,7 +30,7 @@ export function TeamAllocation() {
     await new Promise((resolve) => setTimeout(resolve, 1500))
 
     try {
-      const allocations = algorithm.allocateTeams(state.participants, state.courts, state.currentRound)
+      const allocations = algorithm.allocateTeams(state.participants, state.courts, state.currentGameNumber)
 
       // 驗證分隊結果
       const validations = allocations.map((allocation) => ({
@@ -87,7 +87,7 @@ export function TeamAllocation() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Shuffle className="w-5 h-5" />
-            智慧分隊 - 第 {state.currentRound} 輪
+            智慧分隊 - 第 {state.currentGameNumber} 場
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -95,7 +95,7 @@ export function TeamAllocation() {
             <Alert>
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>
-                分隊演算法將確保：1) 優先安排參與場次少的選手 2) 同場地選手等級差距不超過2級 3) 各場地實力盡量均衡
+                分隊演算法將確保：1) 第二輪時所有人至少上場1次 2) 場次差距不超過1 3) 各場地實力盡量均衡
               </AlertDescription>
             </Alert>
 
@@ -164,7 +164,7 @@ export function TeamAllocation() {
                         處理中...
                       </>
                     ) : (
-                      '下一輪'
+                      '下一場'
                     )}
                   </Button>
                   <Button onClick={handleResetGame} variant="outline" size="lg">

@@ -15,6 +15,12 @@ export function CourtDisplay() {
   const [courtCount, setCourtCount] = useState(state.courts.length)
   const [loadingCourts, setLoadingCourts] = useState<Set<string>>(new Set())
   const algorithm = new TeamAllocationAlgorithm()
+  
+  // 計算當前輪次
+  const getCurrentRound = () => {
+    const activeCourts = state.courts.filter(c => c.isActive)
+    return Math.floor((state.currentGameNumber - 1) / activeCourts.length) + 1
+  }
 
   const updateCourtCount = () => {
     if (courtCount < 1 || courtCount > 10) {
@@ -41,71 +47,69 @@ export function CourtDisplay() {
     // Add loading state
     setLoadingCourts(prev => new Set(prev).add(courtId))
 
-    // 檢查該場地是否已有分配
-    const existingCourtAllocation = state.currentAllocations.find(alloc => alloc.courtId === courtId)
-    
-    // 如果該場地已有分配，更新參與者的遊戲場數
-    if (existingCourtAllocation) {
-      existingCourtAllocation.players.forEach(player => {
-        const participantToUpdate = state.participants.find(p => p.id === player.id)
-        if (participantToUpdate) {
-          const updatedParticipant = {
-            ...participantToUpdate,
-            gamesPlayed: participantToUpdate.gamesPlayed + 1,
-            lastPlayedRound: state.currentRound
-          }
-          dispatch({ type: "UPDATE_PARTICIPANT", payload: updatedParticipant })
-        }
-      })
+    try {
+      // 檢查該場地是否已有分配
+      const existingCourtAllocation = state.currentAllocations.find(alloc => alloc.courtId === courtId)
       
-      // 移除該場地的當前分配
-      const updatedAllocations = state.currentAllocations.filter(alloc => alloc.courtId !== courtId)
-      dispatch({ type: "SET_ALLOCATIONS", payload: updatedAllocations })
-    }
+      // 如果該場地已有分配，這是「下一場」操作
+      if (existingCourtAllocation) {
+        // 1. 先完成該場地的遊戲，更新玩家統計
+        dispatch({ type: "COMPLETE_GAME_FOR_COURT", payload: { courtId } })
+        
+        // 2. 然後移除該場地的當前分配
+        const updatedAllocations = state.currentAllocations.filter(alloc => alloc.courtId !== courtId)
+        dispatch({ type: "SET_ALLOCATIONS", payload: updatedAllocations })
+      }
 
-    // 為該特定場地分配新的隊伍
-    const availableParticipants = state.participants.filter(participant => {
-      // 排除其他場地正在使用的參與者
-      const isPlayingOnOtherCourts = state.currentAllocations.some(alloc => 
-        alloc.courtId !== courtId && alloc.players.some(player => player.id === participant.id)
-      )
-      return !isPlayingOnOtherCourts
-    })
-
-    if (availableParticipants.length < 4) {
-      alert("沒有足夠的可用參與者為此場地分隊")
-      return
-    }
-
-    // 只為這一個場地分配
-    const singleCourt = state.courts.find(court => court.id === courtId)
-    if (!singleCourt) return
-
-    const newAllocation = algorithm.allocateTeams(availableParticipants, [singleCourt], state.currentRound)
-    
-    console.log(`Court ${courtId} new allocation:`, newAllocation) // 調試信息
-    
-    if (newAllocation.length === 0) {
-      alert("該場地分隊失敗")
-      return
-    }
-
-    // 合併新分配到現有分配中
-    const updatedAllocations = [
-      ...state.currentAllocations.filter(alloc => alloc.courtId !== courtId),
-      ...newAllocation
-    ]
-    
-    dispatch({ type: "SET_ALLOCATIONS", payload: updatedAllocations })
-
-    // Simulate brief loading for better UX feedback
-    setTimeout(() => {
-      setLoadingCourts(prev => {
-        const newSet = new Set(prev)
-        newSet.delete(courtId)
-        return newSet
+      // 為該特定場地分配新的隊伍
+      const availableParticipants = state.participants.filter(participant => {
+        // 排除其他場地正在使用的參與者
+        const isPlayingOnOtherCourts = state.currentAllocations.some(alloc => 
+          alloc.courtId !== courtId && alloc.players.some(player => player.id === participant.id)
+        )
+        return !isPlayingOnOtherCourts
       })
-    }, 300)
+
+      if (availableParticipants.length < 4) {
+        alert("沒有足夠的可用參與者為此場地分隊")
+        return
+      }
+
+      // 只為這一個場地分配
+      const singleCourt = state.courts.find(court => court.id === courtId)
+      if (!singleCourt) {
+        alert("找不到指定場地")
+        return
+      }
+
+      const newAllocation = algorithm.allocateTeams(availableParticipants, [singleCourt], state.currentGameNumber)
+      
+      if (newAllocation.length === 0) {
+        alert("該場地分隊失敗，可能是因為場次差距限制")
+        return
+      }
+
+      // 合併新分配到現有分配中
+      const updatedAllocations = [
+        ...state.currentAllocations.filter(alloc => alloc.courtId !== courtId),
+        ...newAllocation
+      ]
+      
+      dispatch({ type: "SET_ALLOCATIONS", payload: updatedAllocations })
+
+    } catch (error) {
+      console.error("分隊過程中發生錯誤:", error)
+      alert("分隊過程中發生錯誤，請稍後再試")
+    } finally {
+      // Remove loading state
+      setTimeout(() => {
+        setLoadingCourts(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(courtId)
+          return newSet
+        })
+      }, 300)
+    }
   }
 
   const getSkillLevelColor = (level: number) => {
@@ -161,7 +165,7 @@ export function CourtDisplay() {
               <div className="text-sm text-muted-foreground">總參與人數</div>
             </div>
             <div className="text-center">
-              <div className="text-2xl font-bold text-primary">{state.currentRound - 1}</div>
+              <div className="text-2xl font-bold text-primary">{getCurrentRound() - 1}</div>
               <div className="text-sm text-muted-foreground">已完成輪次</div>
             </div>
             <div className="text-center">
@@ -178,14 +182,6 @@ export function CourtDisplay() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {state.courts.filter(court => court.isActive).map((court) => {
           const courtAllocation = state.currentAllocations.find(alloc => alloc.courtId === court.id)
-          
-          // 調試信息
-          console.log(`Court ${court.id}:`, {
-            courtAllocation,
-            currentAllocations: state.currentAllocations,
-            participants: state.participants.length,
-            currentRound: state.currentRound
-          })
           
           return (
             <Card key={court.id} className="relative">
@@ -205,7 +201,7 @@ export function CourtDisplay() {
                     ) : (
                       <Play className="w-4 h-4" />
                     )}
-                    {loadingCourts.has(court.id) ? '處理中...' : (courtAllocation ? '下一輪' : '開始分隊')}
+                    {loadingCourts.has(court.id) ? '處理中...' : (courtAllocation ? '下一場' : '開始分隊')}
                   </Button>
                 </CardTitle>
               </CardHeader>
@@ -214,7 +210,7 @@ export function CourtDisplay() {
                   <div className="space-y-4">
                     <div className="text-center">
                       <Badge variant="secondary">
-                        第 {state.currentRound - 1} 輪 - 平均等級: {courtAllocation.averageSkillLevel}
+                        第 {getCurrentRound() - 1} 輪 - 平均等級: {courtAllocation.averageSkillLevel}
                       </Badge>
                     </div>
                     
@@ -328,22 +324,43 @@ export function CourtDisplay() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-              {state.participants.map((participant) => (
-                <div key={participant.id} className="flex items-center justify-between p-3 bg-gray-50 rounded">
-                  <div>
-                    <span className="font-medium">{participant.name}</span>
-                    <div className="flex items-center gap-1 mt-1">
-                      <Badge className={`text-xs ${getSkillLevelColor(participant.skillLevel)}`}>
-                        {participant.skillLevel}級
-                      </Badge>
+              {state.participants.map((participant) => {
+                // 檢查此玩家是否正在場上（當前分配中）
+                const isCurrentlyPlaying = state.currentAllocations.some(alloc => 
+                  alloc.players.some(player => player.id === participant.id)
+                )
+                
+                // 計算顯示的場次數（如果正在場上，顯示為進行中的場次）
+                const displayGamesPlayed = isCurrentlyPlaying ? participant.gamesPlayed + 1 : participant.gamesPlayed
+                
+                return (
+                  <div key={participant.id} className={`flex items-center justify-between p-3 rounded transition-colors ${
+                    isCurrentlyPlaying ? 'bg-green-50 border border-green-200' : 'bg-gray-50'
+                  }`}>
+                    <div>
+                      <span className="font-medium">{participant.name}</span>
+                      <div className="flex items-center gap-1 mt-1">
+                        <Badge className={`text-xs ${getSkillLevelColor(participant.skillLevel)}`}>
+                          {participant.skillLevel}級
+                        </Badge>
+                        {isCurrentlyPlaying && (
+                          <Badge variant="outline" className="text-xs bg-green-100 text-green-800">
+                            場上
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className={`text-lg font-bold ${isCurrentlyPlaying ? 'text-green-600' : 'text-primary'}`}>
+                        {displayGamesPlayed}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {isCurrentlyPlaying ? '進行中場數' : '已打場數'}
+                      </div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-lg font-bold text-primary">{participant.gamesPlayed}</div>
-                    <div className="text-xs text-muted-foreground">已打場數</div>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </CardContent>
         </Card>

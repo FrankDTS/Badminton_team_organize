@@ -1,33 +1,153 @@
 import type { Participant, Court, GameAllocation } from "./app-context"
 
 interface AllocationConstraints {
-  maxSkillLevelDifference: number
+  maxSkillLevelDifference: number // 兩隊技能等級總和最大差異
   playersPerCourt: number
-  maxGamesDifference: number // 最大場次差異限制
-  maxSkillGap: number // 技能等級最大落差限制（避免9級配2級）
+  maxGamesDifference: number // 任何人之間的場次差距不能超過1
+  minGamesInRound2: number // 第二輪時每個人至少要上場的次數
+  enforceEveryTwoRoundsRule: boolean // 是否強制執行每兩輪都要上場的規則
 }
 
 interface PlayerWithPriority extends Participant {
-  priority: number // 落後程度（正數表示落後場次）
-  rotationScore: number // 綜合輪換評分
-  expectedGames?: number // 理論應參與場次
-  gamesBehind?: number // 落後場次數
-  recentTeammates?: string[] // 最近合作過的隊友ID列表
+  waitingGames: number // 已等待的遊戲次數
+  canPlayThisGame: boolean // 本場是否可以上場
+  partnerHistory: { [playerId: string]: number } // 與其他玩家配對次數歷史
+  currentRound: number // 當前是第幾輪
+  priorityScore: number // 優先級分數（越小優先級越高）
+}
+
+interface TeamPairingRecord {
+  players: string[] // 4個玩家的ID，已排序
+  count: number // 配對次數
+  lastUsedGame?: number // 最後使用的場次
 }
 
 export class TeamAllocationAlgorithm {
   private constraints: AllocationConstraints = {
-    maxSkillLevelDifference: 2,
+    maxSkillLevelDifference: 3, // 兩隊等級總合不能差異超過3級
     playersPerCourt: 4,
-    maxGamesDifference: 2, // 強制限制：場次差異不超過2場
-    maxSkillGap: 5, // 技能等級最大落差：9級不配2級（7級差距）
+    maxGamesDifference: 1, // 場次差距不能超過1
+    minGamesInRound2: 1, // 第二輪時每個人至少要上場1次
+    enforceEveryTwoRoundsRule: true, // 強制執行每兩輪都要上場的規則
+  }
+  
+  private teamPairingHistory: Map<string, TeamPairingRecord> = new Map() // 4人組合配對歷史
+  private gamePlayerStats?: Map<string, any> // 場次參與者統計
+  private totalGamesCount: number = 0 // 總場次計數器
+
+  /**
+   * 計算輪次 - 基於場地數量動態計算輪次
+   * @param gameNumber 當前場次編號 (1-based)
+   * @param courtsCount 場地數量
+   * @returns 當前輪次 (1-based)
+   */
+  public calculateRound(gameNumber: number, courtsCount: number): number {
+    if (gameNumber <= 0 || courtsCount <= 0) {
+      throw new Error('場次編號和場地數量必須大於0')
+    }
+    return Math.floor((gameNumber - 1) / courtsCount) + 1
   }
 
   /**
-   * 智能分隊算法主函數（支持輪換）
+   * 取得輪次範圍 - 給定輪次的場次範圍
+   * @param round 輪次 (1-based)
+   * @param courtsCount 場地數量
+   * @returns 該輪次的場次範圍 {start, end}
+   */
+  public getRoundRange(round: number, courtsCount: number): { start: number, end: number } {
+    if (round <= 0 || courtsCount <= 0) {
+      throw new Error('輪次和場地數量必須大於0')
+    }
+    const start = (round - 1) * courtsCount + 1
+    const end = round * courtsCount
+    return { start, end }
+  }
+
+  /**
+   * 規則2: 檢查所有人在每兩輪是否都有上場
+   * @param participants 所有參與者
+   * @param currentRound 當前輪次
+   * @returns 驗證結果
+   */
+  public validateEveryTwoRoundsRule(participants: Participant[], currentRound: number): {
+    isValid: boolean
+    violations: string[]
+    violatingPlayers: Participant[]
+  } {
+    const violations: string[] = []
+    const violatingPlayers: Participant[] = []
+
+    if (!this.constraints.enforceEveryTwoRoundsRule || currentRound < 2) {
+      return { isValid: true, violations: [], violatingPlayers: [] }
+    }
+
+    // 檢查每兩輪規則：當前是第n輪時，檢查每個人在前n-1輪中是否至少上場過
+    if (currentRound >= 2) {
+      participants.forEach(participant => {
+        const hasPlayedInRequiredRounds = participant.lastPlayedRound >= Math.max(1, currentRound - 1)
+        
+        if (!hasPlayedInRequiredRounds) {
+          violations.push(`${participant.name} 在第${currentRound}輪前未符合每兩輪上場規則`)
+          violatingPlayers.push(participant)
+        }
+      })
+    }
+
+    return {
+      isValid: violations.length === 0,
+      violations,
+      violatingPlayers
+    }
+  }
+
+  /**
+   * 規則3: 檢查場次差距是否超過1
+   * @param participants 所有參與者
+   * @returns 驗證結果
+   */
+  public validateGamesDifferenceRule(participants: Participant[]): {
+    isValid: boolean
+    violations: string[]
+    maxDifference: number
+    minGames: number
+    maxGames: number
+  } {
+    if (participants.length === 0) {
+      return { isValid: true, violations: [], maxDifference: 0, minGames: 0, maxGames: 0 }
+    }
+
+    const gamesPlayed = participants.map(p => p.gamesPlayed)
+    const minGames = Math.min(...gamesPlayed)
+    const maxGames = Math.max(...gamesPlayed)
+    const maxDifference = maxGames - minGames
+
+    const violations: string[] = []
+    
+    if (maxDifference > this.constraints.maxGamesDifference) {
+      violations.push(`場次差距過大: ${maxDifference} > ${this.constraints.maxGamesDifference}`)
+      
+      // 列出場次最多和最少的玩家
+      const minPlayers = participants.filter(p => p.gamesPlayed === minGames)
+      const maxPlayers = participants.filter(p => p.gamesPlayed === maxGames)
+      
+      violations.push(`最少場次 (${minGames}): ${minPlayers.map(p => p.name).join(', ')}`)
+      violations.push(`最多場次 (${maxGames}): ${maxPlayers.map(p => p.name).join(', ')}`)
+    }
+
+    return {
+      isValid: violations.length === 0,
+      violations,
+      maxDifference,
+      minGames,
+      maxGames
+    }
+  }
+
+  /**
+   * 智能分隊算法主函數
    * @param participants 所有參與者
    * @param courts 可用場地
-   * @param gameNumber 當前輪次
+   * @param gameNumber 當前場次編號
    * @returns 分隊結果
    */
   public allocateTeams(participants: Participant[], courts: Court[], gameNumber: number): GameAllocation[] {
@@ -36,143 +156,240 @@ export class TeamAllocationAlgorithm {
     if (participants.length === 0 || activeCourts.length === 0) {
       return []
     }
+    
+    // 更新總場次計數器
+    this.totalGamesCount = gameNumber
 
-    const playersWithPriority = this.calculateRotationPriorities(participants, gameNumber, activeCourts.length)
-
-    // 按輪換優先級和技能等級排序
-    const sortedPlayers = this.sortPlayersByRotationAndSkill(playersWithPriority)
+    const playersWithPriority = this.calculatePlayerPriorities(participants, gameNumber, activeCourts.length)
 
     // 執行分隊
-    const allocations = this.performAllocation(sortedPlayers, activeCourts, gameNumber)
+    const allocations = this.performAllocation(playersWithPriority, activeCourts, gameNumber)
 
     return allocations
   }
 
   /**
-   * 計算參與者輪換優先級（嚴格公平輪換模式）
+   * 計算玩家優先級
    */
-  private calculateRotationPriorities(participants: Participant[], currentRound: number, numCourts: number): PlayerWithPriority[] {
-    const totalParticipants = participants.length
-    const playersPerRound = numCourts * this.constraints.playersPerCourt
+  private calculatePlayerPriorities(participants: Participant[], currentGame: number, courtsCount: number): PlayerWithPriority[] {
+    // 計算當前是第幾輪（一輪 = 場地數量個場次）
+    const currentRound = this.calculateRound(currentGame, courtsCount)
     
-    // 計算每個玩家在當前輪次應該參與的理論次數
-    const expectedGamesPerPlayer = this.calculateExpectedGames(currentRound, totalParticipants, playersPerRound)
+    // 全局場次分析
+    const allGamesPlayed = participants.map(p => p.gamesPlayed)
+    const minGames = Math.min(...allGamesPlayed)
+    const maxGames = Math.max(...allGamesPlayed)
+    const currentGamesDiff = maxGames - minGames
     
     return participants.map((participant) => {
-      // 計算該玩家相對於理論值的落後程度
-      const gamesBehind = expectedGamesPerPlayer - participant.gamesPlayed
+      // 計算已等待場次數
+      let waitingGames = 0
+      if (participant.lastPlayedRound === 0) {
+        // 從未上場，等待場次數等於當前場次減1
+        waitingGames = Math.max(0, currentGame - 1)
+      } else {
+        // 計算上次上場是第幾場
+        const lastPlayedGame = (participant.lastPlayedRound - 1) * courtsCount + 1
+        waitingGames = Math.max(0, currentGame - lastPlayedGame - 1)
+      }
       
-      // 基礎優先級：嚴格按照落後程度排序（權重極大）
-      const gamesPriorityScore = gamesBehind * 100
+      // 計算優先級分數（數字越小優先級越高）
+      let priorityScore = 0
       
-      // 輪換公平性：確保輪換順序公平
-      const roundsSinceLastPlayed = currentRound - participant.lastPlayedRound
-      const rotationBonus = roundsSinceLastPlayed * 10
+      // 檢查初期公平性（確保場次均勻分佈）
+      const gamesCountDistribution = {}
+      participants.forEach(p => {
+        gamesCountDistribution[p.gamesPlayed] = (gamesCountDistribution[p.gamesPlayed] || 0) + 1
+      })
       
-      // 絕對禁止連續比賽（除非嚴重落後）
-      const playedLastRound = participant.lastPlayedRound === (currentRound - 1)
-      const severelyBehind = gamesBehind >= 2 // 落後2場以上才允許連續
-      const consecutivePenalty = playedLastRound && !severelyBehind ? 1000 : 0 // 極重懲罰
+      // 規則0：初期公平性 - 如果有人比最少場次多2場以上，降低其優先級
+      if (participant.gamesPlayed > minGames + 1) {
+        priorityScore += 10000 // 極低優先級
+      }
       
-      // 手動調整
-      const manualPriorityScore = participant.rotationPriority * 1
+      // 特別處理：如果有人還沒打過，且此玩家已打過，大幅降低優先級
+      const hasUnplayedPlayers = participants.some(p => p.gamesPlayed === 0)
+      if (hasUnplayedPlayers && participant.gamesPlayed >= 1) {
+        priorityScore += 5000 // 很低優先級
+      }
       
-      // 確保從未參與的玩家有最高優先級
-      const neverPlayedBonus = participant.gamesPlayed === 0 ? -2000 : 0
+      // 規則1：場次少的玩家最優先（權重最高）
+      priorityScore += participant.gamesPlayed * 1000
       
-      // 綜合評分（越小優先級越高）
-      const rotationScore = -gamesPriorityScore + rotationBonus - consecutivePenalty + manualPriorityScore + neverPlayedBonus
-
+      // 規則2：等待時間長的玩家優先
+      priorityScore -= waitingGames * 100
+      
+      // 規則3：第二輪規則加分
+      const mustPlayByRound2 = currentRound >= 2 && participant.gamesPlayed < this.constraints.minGamesInRound2
+      if (mustPlayByRound2) {
+        priorityScore -= 500 // 很高的優先級
+      }
+      
+      // 規則4：場次平衡加分
+      const mustPlayForBalance = currentGamesDiff >= this.constraints.maxGamesDifference && 
+                                 participant.gamesPlayed === minGames
+      if (mustPlayForBalance) {
+        priorityScore -= 300 // 高優先級
+      }
+      
+      // 檢查是否可以本場上場（更寬鬆的條件）
+      const canPlayThisGame = mustPlayByRound2 || mustPlayForBalance || 
+                             (participant.gamesPlayed <= minGames + 1) // 允許稍微超過最少場次
+      
+      // 初始化配對歷史（如果不存在）
+      const partnerHistory: { [playerId: string]: number } = {}
+      
       return {
         ...participant,
-        priority: gamesBehind, // 清晰的落後程度
-        rotationScore,
-        expectedGames: expectedGamesPerPlayer,
-        gamesBehind,
+        waitingGames,
+        canPlayThisGame,
+        partnerHistory,
+        currentRound,
+        priorityScore // 添加優先級分數
       }
     })
   }
 
   /**
-   * 計算每個玩家在指定輪次應該參與的理論場次數
+   * 生成4人組合的唯一鍵
    */
-  private calculateExpectedGames(currentRound: number, totalParticipants: number, playersPerRound: number): number {
-    if (totalParticipants <= playersPerRound) {
-      // 如果總人數不超過每輪能參與的人數，每個人每輪都能參與
-      return currentRound - 1 // currentRound是下一輪，所以-1
-    }
-    
-    // 計算總的參與機會數
-    const totalGameOpportunities = (currentRound - 1) * playersPerRound
-    
-    // 理論上每個玩家應該參與的場次（向下取整確保公平）
-    const baseGames = Math.floor(totalGameOpportunities / totalParticipants)
-    
-    // 計算剩餘的參與機會（需要分配給部分玩家的額外機會）
-    const remainingOpportunities = totalGameOpportunities % totalParticipants
-    
-    // 在早期輪次中，我們更激進地確保每個人都有機會參與
-    const earlyRoundBoost = currentRound <= 3 ? Math.min(1, Math.floor(totalGameOpportunities / totalParticipants)) : 0
-    
-    return Math.max(baseGames + earlyRoundBoost, 0)
+  private generateTeamKey(playerIds: string[]): string {
+    return [...playerIds].sort().join('-')
   }
 
   /**
-   * 按輪換優先級和技能等級排序參與者
+   * 檢查4個玩家是否已經配對超過2次
    */
-  private sortPlayersByRotationAndSkill(players: PlayerWithPriority[]): PlayerWithPriority[] {
-    return players.sort((a, b) => {
-      // 首先按輪換評分排序（輪換優先級）
-      if (a.rotationScore !== b.rotationScore) {
-        return a.rotationScore - b.rotationScore
-      }
-      // 然後按技能等級排序，便於後續匹配
-      return a.skillLevel - b.skillLevel
-    })
+  private hasPlayedTogetherTooMuch(playerIds: string[]): boolean {
+    const teamKey = this.generateTeamKey(playerIds)
+    const record = this.teamPairingHistory.get(teamKey)
+    return record ? record.count >= 2 : false
   }
 
   /**
    * 執行分隊分配
    */
   private performAllocation(
-    sortedPlayers: PlayerWithPriority[],
+    playersWithPriority: PlayerWithPriority[],
     courts: Court[],
     gameNumber: number,
   ): GameAllocation[] {
     const allocations: GameAllocation[] = []
-    const availablePlayers = [...sortedPlayers]
-
-    // 先驗證並調整，防止連續比賽情況
-    this.preventConsecutiveGames(availablePlayers, gameNumber, courts.length)
-
-    // 強制執行場次差異約束
-    this.enforceGamesDifferenceConstraint(availablePlayers)
-
+    
+    // 每次分配前都重新計算場次差距，因為每分配一場都會改變狀況
+    let remainingPlayers = [...playersWithPriority]
+    
     for (const court of courts) {
-      if (availablePlayers.length < this.constraints.playersPerCourt) {
-        break // 剩餘人數不足一個場地
+      if (remainingPlayers.length < this.constraints.playersPerCourt) {
+        break
       }
 
-      const courtPlayers = this.selectPlayersForCourt(availablePlayers, courts.length)
+      // 重新計算當前剩餘玩家的場次差距
+      const currentGamesPlayed = remainingPlayers.map(p => p.gamesPlayed)
+      const currentMinGames = Math.min(...currentGamesPlayed)
+      const currentMaxGames = Math.max(...currentGamesPlayed)
+      const currentGamesDifference = currentMaxGames - currentMinGames
+      
+      // 智能控制：優先確保場次少的玩家能上場，適度控制場次差距
+      let eligiblePlayers: PlayerWithPriority[]
+      
+      // 使用優先級分數排序（分數低的優先）
+      const sortedByPriority = [...remainingPlayers].sort((a, b) => {
+        return a.priorityScore - b.priorityScore
+      })
+      
+      // 更簡化但更公平的選擇邏輯
+      eligiblePlayers = []
+      
+      // 首先選擇優先級最高的玩家
+      for (const player of sortedByPriority) {
+        if (eligiblePlayers.length >= this.constraints.playersPerCourt) break
+        
+        // 計算選中此玩家後的場次差距
+        const wouldBeGames = player.gamesPlayed + 1
+        
+        // 計算選中此玩家後，全體玩家的場次分佈
+        const allSelectedPlayerIds = []
+        for (const alloc of allocations) {
+          allSelectedPlayerIds.push(...alloc.players.map(pl => pl.id))
+        }
+        allSelectedPlayerIds.push(...eligiblePlayers.map(p => p.id))
+        allSelectedPlayerIds.push(player.id)
+        
+        const allGamesAfter = playersWithPriority.map(p => {
+          return allSelectedPlayerIds.includes(p.id) ? p.gamesPlayed + 1 : p.gamesPlayed
+        })
+        
+        const newMinGames = Math.min(...allGamesAfter)
+        const newMaxGames = Math.max(...allGamesAfter)
+        const newDifference = newMaxGames - newMinGames
+        
+        // 更寬鬆的差距控制：場次差距大時優先選場次少的，否則允許適當差距
+        const maxAllowedDifference = currentGamesDifference >= 2 ? 2 : 3
+        
+        if (newDifference <= maxAllowedDifference || player.gamesPlayed === currentMinGames) {
+          eligiblePlayers.push(player)
+        }
+      }
+      
+      // 如果仍不足4人，強制選擇優先級最高的玩家
+      if (eligiblePlayers.length < this.constraints.playersPerCourt) {
+        eligiblePlayers = sortedByPriority.slice(0, this.constraints.playersPerCourt)
+      }
+      
+      // 最終排序：使用優先級分數
+      eligiblePlayers.sort((a, b) => {
+        return a.priorityScore - b.priorityScore
+      })
 
+      const courtPlayers = this.selectBestTeam(eligiblePlayers, gameNumber, courts.length)
+      
       if (courtPlayers.length === this.constraints.playersPerCourt) {
-        // 從可用列表中移除已分配的參與者
-        courtPlayers.forEach((player) => {
-          const index = availablePlayers.findIndex((p) => p.id === player.id)
-          if (index > -1) {
-            availablePlayers.splice(index, 1)
-          }
-        })
+        // 雙重驗證：再次檢查分配後全體玩家的場次差距
+        const selectedPlayerIds = courtPlayers.map(p => p.id)
+        
+        // 計算所有已分配的玩家ID（包括之前的場地和當前場地）
+        const allSelectedPlayerIds: string[] = []
+        for (const alloc of allocations) {
+          allSelectedPlayerIds.push(...alloc.players.map(p => p.id))
+        }
+        allSelectedPlayerIds.push(...selectedPlayerIds)
+        
+        const afterAllocation = playersWithPriority.map(p => ({
+          ...p,
+          gamesPlayed: allSelectedPlayerIds.includes(p.id) ? p.gamesPlayed + 1 : p.gamesPlayed
+        }))
+        
+        const allGamesAfter = afterAllocation.map(p => p.gamesPlayed)
+        const minGamesAfter = Math.min(...allGamesAfter)
+        const maxGamesAfter = Math.max(...allGamesAfter)
+        const gamesDiffAfter = maxGamesAfter - minGamesAfter
+        
+        // 適度控制場次差距，優先保證場次少的玩家能上場
+        const acceptableDifference = Math.max(this.constraints.maxGamesDifference, 2) // 允許最大差距為2
+        if (gamesDiffAfter <= acceptableDifference) {
+          // 記錄配對歷史
+          const playerIds = courtPlayers.map(p => p.id)
+          this.recordTeamPairing(playerIds, gameNumber)
+          
+          // 從剩餘玩家列表中移除已分配的參與者
+          remainingPlayers = remainingPlayers.filter(p => 
+            !selectedPlayerIds.includes(p.id)
+          )
 
-        const averageSkillLevel = courtPlayers.reduce((sum, p) => sum + p.skillLevel, 0) / courtPlayers.length
+          const averageSkillLevel = courtPlayers.reduce((sum, p) => sum + p.skillLevel, 0) / courtPlayers.length
 
-        allocations.push({
-          courtId: court.id,
-          courtName: court.name,
-          players: courtPlayers,
-          averageSkillLevel: Math.round(averageSkillLevel * 10) / 10,
-          gameNumber,
-        })
+          allocations.push({
+            courtId: court.id,
+            courtName: court.name,
+            players: courtPlayers,
+            averageSkillLevel: Math.round(averageSkillLevel * 10) / 10,
+            gameNumber,
+          })
+        } else {
+          // 如果會違反規則，跳過這個場地的分配
+          break
+        }
       }
     }
 
@@ -180,257 +397,431 @@ export class TeamAllocationAlgorithm {
   }
 
   /**
-   * 強制執行嚴格公平性約束
+   * 記錄4人組合配對歷史
    */
-  private enforceGamesDifferenceConstraint(players: PlayerWithPriority[]): void {
-    // 按照落後程度重新強制排序
-    players.sort((a, b) => {
-      // 首先按落後場次排序（落後越多優先級越高）
-      const gamesDiff = (b.gamesBehind || 0) - (a.gamesBehind || 0)
-      if (gamesDiff !== 0) return gamesDiff
-      
-      // 然後按等待時間排序
-      const waitDiff = b.lastPlayedRound - a.lastPlayedRound
-      if (waitDiff !== 0) return waitDiff
-      
-      // 最後按技能等級排序（便於後續匹配）
-      return a.skillLevel - b.skillLevel
-    })
+  private recordTeamPairing(playerIds: string[], gameNumber: number): void {
+    const teamKey = this.generateTeamKey(playerIds)
+    const existing = this.teamPairingHistory.get(teamKey)
     
-    // 對於嚴重偏離理論值的玩家進行強制調整
-    players.forEach(player => {
-      const gamesBehind = player.gamesBehind || 0
-      
-      if (gamesBehind >= 2) {
-        // 嚴重落後的玩家獲得絕對優先級
-        player.rotationScore = -10000 - gamesBehind * 1000
-      } else if (gamesBehind <= -2) {
-        // 嚴重超前的玩家獲得最低優先級
-        player.rotationScore = 10000 + Math.abs(gamesBehind) * 1000
-      }
-    })
-  }
-
-  /**
-   * 防止連續比賽的額外檢查和調整
-   */
-  private preventConsecutiveGames(players: PlayerWithPriority[], currentRound: number, numCourts: number): void {
-    const averageGames = players.reduce((sum, p) => sum + p.gamesPlayed, 0) / players.length
-    const catchUpThreshold = Math.max(1, Math.floor(numCourts / 2))
-    
-    // 對連續上場的玩家進行額外的優先級調整
-    players.forEach(player => {
-      const playedLastRound = player.lastPlayedRound === (currentRound - 1)
-      const gamesBehind = averageGames - player.gamesPlayed
-      
-      if (playedLastRound && gamesBehind < catchUpThreshold) {
-        // 如果上一輪參與且不急需追趕，進一步降低優先級
-        player.rotationScore += 10 // 額外懲罰
-      }
-      
-      // 如果等待時間過長，提高優先級
-      const roundsSinceLastPlayed = currentRound - player.lastPlayedRound
-      if (roundsSinceLastPlayed >= 3) {
-        player.rotationScore -= 5 // 額外獎勵
-      }
-    })
-    
-    // 重新排序以反映調整後的優先級
-    players.sort((a, b) => a.rotationScore - b.rotationScore)
-  }
-
-  /**
-   * 為單個場地選擇參與者（嚴格公平模式）
-   */
-  private selectPlayersForCourt(availablePlayers: PlayerWithPriority[], numCourts: number): Participant[] {
-    if (availablePlayers.length < this.constraints.playersPerCourt) {
-      return []
-    }
-
-    const selectedPlayers: Participant[] = []
-    const remainingPlayers = [...availablePlayers]
-
-    // 第一優先級：必須參與的落後玩家（理論上應該參與但還沒參與的）
-    const mustPlayPlayers = remainingPlayers.filter(p => (p.gamesBehind || 0) >= 1)
-    
-    if (mustPlayPlayers.length >= this.constraints.playersPerCourt) {
-      // 如果落後玩家足夠組成整個場地，直接選擇他們
-      return this.selectFromPriorityPool(mustPlayPlayers, this.constraints.playersPerCourt)
-    }
-    
-    // 先選擇所有必須參與的落後玩家
-    if (mustPlayPlayers.length > 0) {
-      selectedPlayers.push(...mustPlayPlayers)
-      mustPlayPlayers.forEach(player => {
-        const index = remainingPlayers.findIndex(p => p.id === player.id)
-        if (index > -1) remainingPlayers.splice(index, 1)
+    if (existing) {
+      existing.count += 1
+      existing.lastUsedGame = gameNumber
+    } else {
+      this.teamPairingHistory.set(teamKey, {
+        players: [...playerIds].sort(),
+        count: 1,
+        lastUsedGame: gameNumber
       })
     }
-
-    // 第二優先級：過濾出沒有連續比賽違規的玩家（需要當前輪次信息）
-    const nonConsecutivePlayers = remainingPlayers.filter(p => {
-      // 檢查是否上一輪剛參與（這裡需要從外部傳入當前輪次，暫時使用rotationScore判斷）
-      const playedLastRound = p.rotationScore > 1000 // 根據之前的連續比賽懲罰邏輯判斷
-      const severelyBehind = (p.gamesBehind || 0) >= 2
-      return !playedLastRound || severelyBehind
-    })
-
-    // 如果有足夠的非連續玩家，優先選擇他們
-    const eligiblePlayers = nonConsecutivePlayers.length >= (this.constraints.playersPerCourt - selectedPlayers.length)
-      ? nonConsecutivePlayers 
-      : remainingPlayers
-
-    // 按優先級排序（已經在外部排序過，但再次確保）
-    eligiblePlayers.sort((a, b) => a.rotationScore - b.rotationScore)
-
-    // 補足剩餘位置，優先考慮技能平衡
-    while (selectedPlayers.length < this.constraints.playersPerCourt && eligiblePlayers.length > 0) {
-      const nextPlayer = this.findBestMatchingPlayer(selectedPlayers, eligiblePlayers, numCourts)
-
-      if (nextPlayer) {
-        selectedPlayers.push(nextPlayer)
-        const index = eligiblePlayers.findIndex((p) => p.id === nextPlayer.id)
-        eligiblePlayers.splice(index, 1)
-      } else {
-        // 如果技能匹配失敗，直接選擇優先級最高的
-        const fallbackPlayer = eligiblePlayers.shift()!
-        selectedPlayers.push(fallbackPlayer)
-      }
-    }
-
-    return selectedPlayers.length === this.constraints.playersPerCourt ? selectedPlayers : []
   }
 
   /**
-   * 從優先級池中選擇參與者（考慮技能平衡）
+   * 選擇最佳的4人組合
    */
-  private selectFromPriorityPool(players: PlayerWithPriority[], count: number): Participant[] {
-    if (players.length < count) {
+  private selectBestTeam(eligiblePlayers: PlayerWithPriority[], gameNumber: number, courtsCount: number): Participant[] {
+    if (eligiblePlayers.length < 4) {
       return []
     }
+    
+    // 計算當前輪次（基於場地數量）
+    const currentRound = this.calculateRound(gameNumber, courtsCount)
+    
+    // 找出必須上場的玩家（第二輪未達到最低場次的）
+    const mustPlayByRound2 = eligiblePlayers.filter(p => 
+      currentRound >= 2 && p.gamesPlayed < this.constraints.minGamesInRound2
+    )
+    
+    if (mustPlayByRound2.length >= 4) {
+      // 如果第二輪規則的人數≥4，優先選擇他們
+      return this.selectFromMustPlayPlayers(mustPlayByRound2)
+    } else if (mustPlayByRound2.length > 0) {
+      // 如果有部分人必須第二輪上場，確保他們都被包含
+      return this.selectWithMustPlayPlayers(mustPlayByRound2, eligiblePlayers)
+    }
+    
+    // 沒有特別的第二輪限制時，嘗試選擇更多樣化的組合
+    return this.selectDiverseTeam(eligiblePlayers, gameNumber)
+  }
 
-    // 按優先級排序（落後程度和等待時間）
-    players.sort((a, b) => a.rotationScore - b.rotationScore)
+  /**
+   * 從必須上場的玩家中選擇4人組合
+   */
+  private selectFromMustPlayPlayers(mustPlayPlayers: PlayerWithPriority[]): Participant[] {
+    if (mustPlayPlayers.length === 4) {
+      return mustPlayPlayers
+    }
+    
+    // 如果超過4人都必須上場，按優先級排序選擇前4人
+    const sortedMustPlay = mustPlayPlayers.sort((a, b) => {
+      // 第二輪規則優先級最高
+      const aNeedsRound2 = a.currentRound >= 2 && a.gamesPlayed < this.constraints.minGamesInRound2
+      const bNeedsRound2 = b.currentRound >= 2 && b.gamesPlayed < this.constraints.minGamesInRound2
+      
+      if (aNeedsRound2 && !bNeedsRound2) return -1
+      if (!aNeedsRound2 && bNeedsRound2) return 1
+      
+      // 先按等待場次排序
+      if (a.waitingGames !== b.waitingGames) {
+        return b.waitingGames - a.waitingGames
+      }
+      // 再按參與場次排序
+      if (a.gamesPlayed !== b.gamesPlayed) {
+        return a.gamesPlayed - b.gamesPlayed
+      }
+      return 0
+    })
+    
+    return sortedMustPlay.slice(0, 4)
+  }
 
-    const selected: Participant[] = []
-    const remaining = [...players]
+  /**
+   * 選擇包含必須上場玩家的組合
+   */
+  private selectWithMustPlayPlayers(mustPlayPlayers: PlayerWithPriority[], allPlayers: PlayerWithPriority[]): Participant[] {
+    const remainingSlots = 4 - mustPlayPlayers.length
+    const otherPlayers = allPlayers.filter(p => !mustPlayPlayers.some(mp => mp.id === p.id))
+    
+    if (otherPlayers.length < remainingSlots) {
+      // 不足4人，盡量組合
+      return [...mustPlayPlayers, ...otherPlayers].slice(0, 4)
+    }
+    
+    // 從其他玩家中選擇最佳組合補充
+    const sortedOthers = otherPlayers.sort((a, b) => {
+      // 優先選擇等待場次長的
+      if (a.waitingGames !== b.waitingGames) {
+        return b.waitingGames - a.waitingGames
+      }
+      // 再選擇參與場次少的
+      if (a.gamesPlayed !== b.gamesPlayed) {
+        return a.gamesPlayed - b.gamesPlayed
+      }
+      return 0
+    })
+    
+    return [...mustPlayPlayers, ...sortedOthers.slice(0, remainingSlots)]
+  }
 
-    // 選擇優先級最高的玩家
-    selected.push(remaining.shift()!)
-
-    // 為其他位置選擇技能匹配的玩家
-    while (selected.length < count && remaining.length > 0) {
-      const currentSkillLevels = selected.map(p => p.skillLevel)
-      const minSkill = Math.min(...currentSkillLevels)
-      const maxSkill = Math.max(...currentSkillLevels)
-
-      // 尋找技能等級匹配的玩家
-      let bestIndex = -1
-      for (let i = 0; i < remaining.length; i++) {
-        const player = remaining[i]
-        const wouldBeMinSkill = Math.min(minSkill, player.skillLevel)
-        const wouldBeMaxSkill = Math.max(maxSkill, player.skillLevel)
+  /**
+   * 選擇多樣化的4人組合
+   */
+  private selectDiverseTeam(eligiblePlayers: PlayerWithPriority[], gameNumber: number): Participant[] {
+    // 如果玩家數量剛好等於4，直接返回
+    if (eligiblePlayers.length === 4) {
+      return eligiblePlayers
+    }
+    
+    let bestTeam: PlayerWithPriority[] = []
+    let bestScore = -1
+    
+    // 嘗試不同的4人組合，選擇最佳的
+    const maxCombinations = Math.min(100, this.getCombinations(eligiblePlayers.length, 4)) // 限制組合數量避免性能問題
+    
+    for (let attempt = 0; attempt < maxCombinations; attempt++) {
+      const candidateTeam = this.selectCandidateTeam(eligiblePlayers, attempt)
+      
+      if (candidateTeam.length === 4) {
+        const score = this.evaluateTeamScore(candidateTeam, gameNumber)
         
-        if (wouldBeMaxSkill - wouldBeMinSkill <= this.constraints.maxSkillLevelDifference) {
-          bestIndex = i
-          break
+        if (score > bestScore) {
+          bestScore = score
+          bestTeam = candidateTeam
         }
       }
-
-      // 如果找到匹配的，選擇它；否則選擇優先級最高的
-      const selectedIndex = bestIndex >= 0 ? bestIndex : 0
-      selected.push(remaining.splice(selectedIndex, 1)[0])
     }
-
-    return selected.length === count ? selected : []
+    
+    // 如果沒有找到好的組合，回到簡單策略
+    if (bestTeam.length === 0) {
+      return eligiblePlayers.slice(0, 4)
+    }
+    
+    return bestTeam
+  }
+  
+  /**
+   * 計算組合數量
+   */
+  private getCombinations(n: number, k: number): number {
+    if (k > n) return 0
+    if (k === 0 || k === n) return 1
+    
+    let result = 1
+    for (let i = 0; i < k; i++) {
+      result = result * (n - i) / (i + 1)
+    }
+    return Math.floor(result)
+  }
+  
+  /**
+   * 選擇候選團隊
+   */
+  private selectCandidateTeam(eligiblePlayers: PlayerWithPriority[], attempt: number): PlayerWithPriority[] {
+    // 根據attempt選擇不同的策略
+    const strategies = [
+      () => eligiblePlayers.slice(0, 4), // 前4名
+      () => this.selectByGamesAndWaiting(eligiblePlayers), // 場次和等待時間平衡
+      () => this.selectBySkillBalance(eligiblePlayers), // 技能平衡
+      () => this.selectRandomly(eligiblePlayers), // 隨機選擇
+    ]
+    
+    const strategy = strategies[attempt % strategies.length]
+    return strategy()
+  }
+  
+  /**
+   * 按場次和等待時間平衡選擇
+   */
+  private selectByGamesAndWaiting(eligiblePlayers: PlayerWithPriority[]): PlayerWithPriority[] {
+    // 綜合考慮場次和等待時間
+    const scored = eligiblePlayers.map(player => ({
+      player,
+      score: (player.waitingGames * 2) - player.gamesPlayed // 等待時間權重更高
+    }))
+    
+    scored.sort((a, b) => b.score - a.score)
+    return scored.slice(0, 4).map(s => s.player)
+  }
+  
+  /**
+   * 按技能平衡選擇
+   */
+  private selectBySkillBalance(eligiblePlayers: PlayerWithPriority[]): PlayerWithPriority[] {
+    // 嘗試選擇技能等級分佈較均勻的組合
+    const sortedBySkill = [...eligiblePlayers].sort((a, b) => a.skillLevel - b.skillLevel)
+    
+    // 嘗試選擇不同技能等級的玩家
+    const selected: PlayerWithPriority[] = []
+    const usedSkillLevels = new Set<number>()
+    
+    // 先選擇不同技能等級的玩家
+    for (const player of sortedBySkill) {
+      if (!usedSkillLevels.has(player.skillLevel) && selected.length < 4) {
+        selected.push(player)
+        usedSkillLevels.add(player.skillLevel)
+      }
+    }
+    
+    // 如果不足4人，補充剩餘的
+    while (selected.length < 4 && selected.length < eligiblePlayers.length) {
+      for (const player of eligiblePlayers) {
+        if (!selected.includes(player) && selected.length < 4) {
+          selected.push(player)
+        }
+      }
+    }
+    
+    return selected
+  }
+  
+  /**
+   * 隨機選擇
+   */
+  private selectRandomly(eligiblePlayers: PlayerWithPriority[]): PlayerWithPriority[] {
+    const shuffled = [...eligiblePlayers]
+    
+    // 簡單的洗牌算法
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+    }
+    
+    return shuffled.slice(0, 4)
+  }
+  
+  /**
+   * 評估團隊分數
+   */
+  private evaluateTeamScore(team: PlayerWithPriority[], gameNumber: number): number {
+    let score = 0
+    
+    // 場次平衡分數（等待時間長的玩家優先）
+    const totalWaiting = team.reduce((sum, p) => sum + p.waitingGames, 0)
+    score += totalWaiting * 10
+    
+    // 場次均勻分數（場次少的玩家優先）
+    const avgGames = team.reduce((sum, p) => sum + p.gamesPlayed, 0) / 4
+    const gameVariance = team.reduce((sum, p) => sum + Math.pow(p.gamesPlayed - avgGames, 2), 0) / 4
+    score += (10 - gameVariance) * 5 // 方差越小分數越高
+    
+    // 技能平衡分數
+    const skillLevels = team.map(p => p.skillLevel)
+    const avgSkill = skillLevels.reduce((sum, s) => sum + s, 0) / 4
+    const skillVariance = skillLevels.reduce((sum, s) => sum + Math.pow(s - avgSkill, 2), 0) / 4
+    score += (10 - skillVariance) * 3 // 技能分散度適中最好
+    
+    // 組合新穎度分數（避免重複組合）
+    const playerIds = team.map(p => p.id)
+    const teamKey = this.generateTeamKey(playerIds)
+    const record = this.teamPairingHistory.get(teamKey)
+    const repeatCount = record ? record.count : 0
+    score -= repeatCount * 20 // 重複越多扣分越多
+    
+    return score
   }
 
   /**
-   * 從受約束的玩家池中選擇參與者（確保技能等級平衡）
+   * 從場次平衡的玩家中選擇4人組合
    */
-  private selectFromConstrainedPool(players: PlayerWithPriority[], count: number): Participant[] {
-    if (players.length < count) {
-      return []
+  private selectFromGameBalancedPlayers(gameBalancedPlayers: PlayerWithPriority[], mustPlayPlayers: PlayerWithPriority[]): Participant[] {
+    // 確保必須上場的人被包含（如果他們也在場次平衡的範圍內）
+    const validMustPlay = mustPlayPlayers.filter(mp => 
+      gameBalancedPlayers.some(gbp => gbp.id === mp.id)
+    )
+    
+    if (validMustPlay.length >= 4) {
+      return this.selectFromMustPlayPlayers(validMustPlay)
+    } else if (validMustPlay.length > 0) {
+      return this.selectWithMustPlayPlayers(validMustPlay, gameBalancedPlayers)
     }
-
-    // 按輪換優先級和技能等級排序
-    players.sort((a, b) => {
-      if (a.rotationScore !== b.rotationScore) {
-        return a.rotationScore - b.rotationScore
+    
+    // 沒有必須上場的限制時，從場次平衡的玩家中選擇最佳組合
+    const sortedBalanced = gameBalancedPlayers.sort((a, b) => {
+      // 按等待場次排序
+      if (a.waitingGames !== b.waitingGames) {
+        return b.waitingGames - a.waitingGames
       }
+      // 按技能等級排序，方便配對
       return a.skillLevel - b.skillLevel
     })
-
-    const selected: Participant[] = []
-    const remaining = [...players]
-
-    // 選擇第一個玩家
-    selected.push(remaining.shift()!)
-
-    // 為其他位置選擇技能等級匹配的玩家
-    while (selected.length < count && remaining.length > 0) {
-      const currentSkillLevels = selected.map(p => p.skillLevel)
-      const minSkill = Math.min(...currentSkillLevels)
-      const maxSkill = Math.max(...currentSkillLevels)
-
-      // 尋找技能等級匹配的玩家
-      let bestIndex = 0
-      for (let i = 1; i < remaining.length; i++) {
-        const player = remaining[i]
-        const wouldBeMinSkill = Math.min(minSkill, player.skillLevel)
-        const wouldBeMaxSkill = Math.max(maxSkill, player.skillLevel)
-        
-        if (wouldBeMaxSkill - wouldBeMinSkill <= this.constraints.maxSkillLevelDifference) {
-          bestIndex = i
-          break
-        }
-      }
-
-      selected.push(remaining.splice(bestIndex, 1)[0])
-    }
-
-    return selected.length === count ? selected : []
+    
+    return sortedBalanced.slice(0, 4)
   }
 
   /**
-   * 找到最佳匹配的參與者
+   * 檢查4人組合是否有效
    */
-  private findBestMatchingPlayer(
-    selectedPlayers: Participant[],
-    remainingPlayers: PlayerWithPriority[],
-    numCourts: number,
-  ): Participant | null {
-    const currentSkillLevels = selectedPlayers.map((p) => p.skillLevel)
-    const minSkill = Math.min(...currentSkillLevels)
-    const maxSkill = Math.max(...currentSkillLevels)
-
-    // 尋找技能等級在允許範圍內的參與者
-    const suitablePlayers = remainingPlayers.filter((player) => {
-      const wouldBeMinSkill = Math.min(minSkill, player.skillLevel)
-      const wouldBeMaxSkill = Math.max(maxSkill, player.skillLevel)
-      return wouldBeMaxSkill - wouldBeMinSkill <= this.constraints.maxSkillLevelDifference
-    })
-
-    if (suitablePlayers.length === 0) {
-      return null
-    }
-
-    // 動態篩選：根據場地數量調整連續比賽容忍度
-    const averageGames = remainingPlayers.reduce((sum, p) => sum + p.gamesPlayed, 0) / remainingPlayers.length
-    const catchUpThreshold = Math.max(1, Math.floor(numCourts / 2))
+  private isValidTeam(team: PlayerWithPriority[]): boolean {
+    const playerIds = team.map(p => p.id)
     
-    const nonConsecutiveSuitable = suitablePlayers.filter(player => {
-      const gamesBehind = averageGames - player.gamesPlayed
-      const needsUrgentCatchUp = gamesBehind >= catchUpThreshold
-      const playedLastRound = player.rotationScore >= 15 // 根據新的懲罰分數判斷
-      return !playedLastRound || needsUrgentCatchUp
+    // 規則2: 同樣的4個人不能被配對超過2次
+    if (this.hasPlayedTogetherTooMuch(playerIds)) {
+      return false
+    }
+    
+    // 規則3: 兩隊的等級總合不能差異超過3級
+    // 嘗試三種配對方式找出最佳配對
+    const pairings = [
+      { team1: [0, 1], team2: [2, 3] }, // 前兩個vs後兩個
+      { team1: [0, 2], team2: [1, 3] }, // 第1、3個vs第2、4個
+      { team1: [0, 3], team2: [1, 2] }  // 第1、4個vs第2、3個
+    ]
+    
+    for (const pairing of pairings) {
+      const team1Sum = pairing.team1.reduce((sum, idx) => sum + team[idx].skillLevel, 0)
+      const team2Sum = pairing.team2.reduce((sum, idx) => sum + team[idx].skillLevel, 0)
+      
+      if (Math.abs(team1Sum - team2Sum) <= this.constraints.maxSkillLevelDifference) {
+        return true // 至少有一種配對方式符合約束
+      }
+    }
+    
+    return false // 所有配對方式都不符合約束
+  }
+
+  /**
+   * 比較兩個團隊，返回true如果第一個團隊更好
+   */
+  private compareTeams(team1: PlayerWithPriority[], team2: PlayerWithPriority[]): boolean {
+    // 計算場次差距影響
+    const team1MaxGames = Math.max(...team1.map(p => p.gamesPlayed))
+    const team1MinGames = Math.min(...team1.map(p => p.gamesPlayed))
+    const team1GamesDiff = team1MaxGames - team1MinGames
+    
+    const team2MaxGames = Math.max(...team2.map(p => p.gamesPlayed))
+    const team2MinGames = Math.min(...team2.map(p => p.gamesPlayed))
+    const team2GamesDiff = team2MaxGames - team2MinGames
+    
+    // 優先選擇不會增加場次差距的團隊
+    if (team1GamesDiff !== team2GamesDiff) {
+      return team1GamesDiff < team2GamesDiff
+    }
+    
+    // 其次選擇總參與場次更少的團隊（保持場次平衡）
+    const team1TotalGames = team1.reduce((sum, p) => sum + p.gamesPlayed, 0)
+    const team2TotalGames = team2.reduce((sum, p) => sum + p.gamesPlayed, 0)
+    
+    if (team1TotalGames !== team2TotalGames) {
+      return team1TotalGames < team2TotalGames
+    }
+    
+    // 再次選擇等待時間更長的團隊
+    const team1TotalWaiting = team1.reduce((sum, p) => sum + p.waitingGames, 0)
+    const team2TotalWaiting = team2.reduce((sum, p) => sum + p.waitingGames, 0)
+    
+    if (team1TotalWaiting !== team2TotalWaiting) {
+      return team1TotalWaiting > team2TotalWaiting
+    }
+    
+    // 最後選擇技能等級更平衡的團隊
+    const team1SkillVariance = this.calculateSkillVariance(team1)
+    const team2SkillVariance = this.calculateSkillVariance(team2)
+    
+    return team1SkillVariance < team2SkillVariance
+  }
+
+  /**
+   * 計算團隊技能等級方差
+   */
+  private calculateSkillVariance(team: PlayerWithPriority[]): number {
+    const skillLevels = team.map(p => p.skillLevel)
+    const mean = skillLevels.reduce((sum, level) => sum + level, 0) / skillLevels.length
+    const variance = skillLevels.reduce((sum, level) => sum + Math.pow(level - mean, 2), 0) / skillLevels.length
+    return variance
+  }
+
+  /**
+   * 簡單選擇策略 - 當約束太嚴格時的備用方案
+   */
+  private selectWithSimpleStrategy(eligiblePlayers: PlayerWithPriority[]): Participant[] {
+    if (eligiblePlayers.length < 4) {
+      return []
+    }
+    
+    // 排序玩家：優先等待時間長的、場次少的
+    const sortedPlayers = [...eligiblePlayers].sort((a, b) => {
+      // 首先按等待輪數排序
+      if (a.waitingGames !== b.waitingGames) {
+        return b.waitingGames - a.waitingGames
+      }
+      // 然後按參與場次排序
+      if (a.gamesPlayed !== b.gamesPlayed) {
+        return a.gamesPlayed - b.gamesPlayed
+      }
+      return 0
     })
-
-    // 強制優先選擇非連續玩家，只有在無可選擇時才考慮連續玩家
-    const playersToConsider = nonConsecutiveSuitable.length > 0 ? nonConsecutiveSuitable : suitablePlayers
-
-    // 在符合條件的參與者中選擇輪換評分最佳的（綜合優先級最高的）
-    return playersToConsider.reduce((best, current) => (current.rotationScore < best.rotationScore ? current : best))
+    
+    // 選擇前4名，但嘗試避免技能差距過大
+    const selected = []
+    const remaining = [...sortedPlayers]
+    
+    // 選擇第一個玩家
+    selected.push(remaining.shift()!)
+    
+    // 選擇剩下的3個玩家，考慮技能平衡
+    while (selected.length < 4 && remaining.length > 0) {
+      let bestIndex = 0
+      let bestScore = -1
+      
+      for (let i = 0; i < remaining.length; i++) {
+        const tempTeam = [...selected, remaining[i]]
+        const skillLevels = tempTeam.map(p => p.skillLevel)
+        const maxSkill = Math.max(...skillLevels)
+        const minSkill = Math.min(...skillLevels)
+        const skillRange = maxSkill - minSkill
+        
+        // 優先選擇技能範圍較小的組合，但也考慮等待時間
+        const score = remaining[i].waitingGames * 10 - skillRange
+        
+        if (score > bestScore) {
+          bestScore = score
+          bestIndex = i
+        }
+      }
+      
+      selected.push(remaining.splice(bestIndex, 1)[0])
+    }
+    
+    return selected
   }
 
   /**
@@ -447,56 +838,18 @@ export class TeamAllocationAlgorithm {
       violations.push(`場地人數不正確: ${allocation.players.length}/4`)
     }
 
-    // 檢查技能等級差距
+    // 檢查技能等級差距（這裡檢查4人中最大最小差距）
     const skillLevels = allocation.players.map((p) => p.skillLevel)
     const minSkill = Math.min(...skillLevels)
     const maxSkill = Math.max(...skillLevels)
     const skillDifference = maxSkill - minSkill
 
-    if (skillDifference > this.constraints.maxSkillLevelDifference) {
-      violations.push(`技能等級差距過大: ${skillDifference} (最大允許: ${this.constraints.maxSkillLevelDifference})`)
+    if (skillDifference > 6) { // 允許較大的個人差距，因為我們主要關注隊伍平衡
+      violations.push(`個人技能等級差距過大: ${skillDifference}級`)
     }
 
     return {
       isValid: violations.length === 0,
-      violations,
-    }
-  }
-
-  /**
-   * 驗證所有參與者的場次差異約束
-   */
-  public validateGamesDifference(participants: Participant[]): {
-    isValid: boolean
-    maxDifference: number
-    violations: string[]
-  } {
-    const violations: string[] = []
-    const gamesPlayed = participants.map(p => p.gamesPlayed)
-    const minGames = Math.min(...gamesPlayed)
-    const maxGames = Math.max(...gamesPlayed)
-    const maxDifference = maxGames - minGames
-
-    if (maxDifference > this.constraints.maxGamesDifference) {
-      violations.push(`場次差異過大: ${maxDifference} (最大允許: ${this.constraints.maxGamesDifference})`)
-      
-      const maxPlayersNames = participants
-        .filter(p => p.gamesPlayed === maxGames)
-        .map(p => p.name)
-        .join(', ')
-      
-      const minPlayersNames = participants
-        .filter(p => p.gamesPlayed === minGames)
-        .map(p => p.name)
-        .join(', ')
-
-      violations.push(`最多場次(${maxGames}場): ${maxPlayersNames}`)
-      violations.push(`最少場次(${minGames}場): ${minPlayersNames}`)
-    }
-
-    return {
-      isValid: violations.length === 0,
-      maxDifference,
       violations,
     }
   }
@@ -541,63 +894,6 @@ export class TeamAllocationAlgorithm {
       averageSkillLevel: Math.round(averageSkillLevel * 10) / 10,
       skillLevelDistribution,
       balanceScore: Math.max(0, balanceScore),
-    }
-  }
-
-  /**
-   * 預測下次輪換安排
-   */
-  public predictNextRotation(
-    participants: Participant[],
-    courts: Court[],
-    currentRound: number,
-  ): {
-    nextUpPlayers: Participant[]
-    waitingPlayers: Participant[]
-    estimatedWaitRounds: { [participantId: string]: number }
-  } {
-    const activeCourts = courts.filter((court) => court.isActive)
-    const maxPlayersPerRound = activeCourts.length * this.constraints.playersPerCourt
-
-    if (participants.length <= maxPlayersPerRound) {
-      return {
-        nextUpPlayers: participants,
-        waitingPlayers: [],
-        estimatedWaitRounds: {},
-      }
-    }
-
-    // 計算輪換優先級
-    const playersWithPriority = this.calculateRotationPriorities(participants, currentRound + 1)
-    const sortedPlayers = this.sortPlayersByRotationAndSkill(playersWithPriority)
-
-    const nextUpPlayers = sortedPlayers.slice(0, maxPlayersPerRound)
-    const waitingPlayers = sortedPlayers.slice(maxPlayersPerRound)
-
-    // 確保等待輪次不會超過場地數量 - 每個參與者最多等待場地數量的輪次
-    const estimatedWaitRounds: { [participantId: string]: number } = {}
-    const numCourts = activeCourts.length
-    
-    waitingPlayers.forEach((player, index) => {
-      // 計算該參與者在隊列中的位置
-      const position = index + 1
-      
-      // 計算在當前輪換週期中的位置
-      const positionInCycle = ((position - 1) % maxPlayersPerRound) + 1
-      
-      // 等待輪次不應超過場地數量，確保輪換公平性
-      const roundsToWait = Math.min(
-        Math.ceil(positionInCycle / maxPlayersPerRound),
-        numCourts
-      )
-      
-      estimatedWaitRounds[player.id] = roundsToWait
-    })
-
-    return {
-      nextUpPlayers,
-      waitingPlayers,
-      estimatedWaitRounds,
     }
   }
 
@@ -656,60 +952,91 @@ export class TeamAllocationAlgorithm {
       rotationEfficiency: Math.round(rotationEfficiency * 10) / 10,
     }
   }
-
+  
   /**
-   * 獲取詳細統計信息（包含連續比賽防止情況）
+   * 獲取詳細的輪次分析報告
    */
-  public getDetailedStats(
+  public getRoundAnalysis(
     participants: Participant[],
     currentRound: number,
+    allocations: GameAllocation[]
   ): {
-    totalParticipants: number
-    playingThisRound: number
-    waitingThisRound: number
-    consecutivePlayersCount: number
-    needsCatchUpCount: number
-    rotationHealthScore: number
+    playingPlayers: number
+    waitingPlayers: number
+    averageSkillBalance: number
+    skillDistribution: { [courtId: string]: { min: number, max: number, avg: number } }
+    repeatPairings: number
   } {
-    if (participants.length === 0) {
-      return {
-        totalParticipants: 0,
-        playingThisRound: 0,
-        waitingThisRound: 0,
-        consecutivePlayersCount: 0,
-        needsCatchUpCount: 0,
-        rotationHealthScore: 10,
-      }
-    }
-
-    const averageGamesPlayed = participants.reduce((sum, p) => sum + p.gamesPlayed, 0) / participants.length
-    const consecutivePlayersCount = participants.filter(p => p.lastPlayedRound === (currentRound - 1)).length
-    // 這裡需要場地數量信息，暫時使用保守估計
-    const estimatedCourts = Math.max(1, Math.floor(participants.length / 8)) // 估計場地數量
-    const catchUpThreshold = Math.max(1, Math.floor(estimatedCourts / 2))
+    const playingPlayerIds = new Set(allocations.flatMap(a => a.players.map(p => p.id)))
+    const playingPlayers = playingPlayerIds.size
+    const waitingPlayers = participants.length - playingPlayers
     
-    const needsCatchUpCount = participants.filter(p => {
-      const gamesBehind = averageGamesPlayed - p.gamesPlayed
-      return gamesBehind >= catchUpThreshold
-    }).length
-
-    const gamesPlayed = participants.map((p) => p.gamesPlayed)
-    const minGames = Math.min(...gamesPlayed)
-    const maxGames = Math.max(...gamesPlayed)
-    const maxGamesDifference = maxGames - minGames
-
-    // 輪換健康分數：綜合考慮公平性和連續比賽防止
-    const fairnessPenalty = maxGamesDifference * 2.0 // 加大公平性權重
-    const consecutivePenalty = (consecutivePlayersCount - needsCatchUpCount) * 1.2 // 加大連續比賽懲罰
-    const rotationHealthScore = Math.max(0, 10 - fairnessPenalty - consecutivePenalty)
-
+    // 計算技能平衡
+    const skillBalances = allocations.map(allocation => {
+      const skillLevels = allocation.players.map(p => p.skillLevel)
+      const min = Math.min(...skillLevels)
+      const max = Math.max(...skillLevels)
+      const avg = skillLevels.reduce((sum, s) => sum + s, 0) / skillLevels.length
+      
+      return { min, max, avg, range: max - min }
+    })
+    
+    const averageSkillBalance = skillBalances.reduce((sum, b) => sum + b.range, 0) / skillBalances.length
+    
+    const skillDistribution: { [courtId: string]: { min: number, max: number, avg: number } } = {}
+    allocations.forEach((allocation, index) => {
+      const balance = skillBalances[index] // 找對應的平衡數據
+      if (balance) {
+        skillDistribution[allocation.courtId] = {
+          min: balance.min,
+          max: balance.max,
+          avg: Math.round(balance.avg * 10) / 10
+        }
+      }
+    })
+    
+    // 檢查重複配對
+    let repeatPairings = 0
+    allocations.forEach(allocation => {
+      const playerIds = allocation.players.map(p => p.id)
+      const teamKey = this.generateTeamKey(playerIds)
+      const record = this.teamPairingHistory.get(teamKey)
+      if (record && record.lastUsedGame === (currentRound - 1)) {
+        repeatPairings++
+      }
+    })
+    
     return {
-      totalParticipants: participants.length,
-      playingThisRound: 0, // 這個需要在分配後才能確定
-      waitingThisRound: 0, // 這個需要在分配後才能確定
-      consecutivePlayersCount,
-      needsCatchUpCount,
-      rotationHealthScore: Math.round(rotationHealthScore * 10) / 10,
+      playingPlayers,
+      waitingPlayers,
+      averageSkillBalance: Math.round(averageSkillBalance * 10) / 10,
+      skillDistribution,
+      repeatPairings
     }
+  }
+  
+  /**
+   * 重置算法狀態（新輪次開始時使用）
+   */
+  public resetForNewSession(): void {
+    this.teamPairingHistory.clear()
+    this.totalGamesCount = 0
+    if (this.gamePlayerStats) {
+      this.gamePlayerStats.clear()
+    }
+  }
+  
+  /**
+   * 獲取算法配置
+   */
+  public getConstraints(): AllocationConstraints {
+    return { ...this.constraints }
+  }
+  
+  /**
+   * 更新算法配置
+   */
+  public updateConstraints(newConstraints: Partial<AllocationConstraints>): void {
+    this.constraints = { ...this.constraints, ...newConstraints }
   }
 }
