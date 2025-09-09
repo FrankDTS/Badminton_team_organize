@@ -17,6 +17,8 @@ export function ParticipantManager() {
   const [newSkillLevel, setNewSkillLevel] = useState<number>(5)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editSkillLevel, setEditSkillLevel] = useState<number>(5)
+  const [editingGamesId, setEditingGamesId] = useState<string | null>(null)
+  const [editGamesPlayed, setEditGamesPlayed] = useState<number>(0)
   const [error, setError] = useState<string>("")
 
   const addParticipant = () => {
@@ -75,6 +77,16 @@ export function ParticipantManager() {
     setEditSkillLevel(5)
   }
 
+  const startEditingGames = (participant: Participant) => {
+    setEditingGamesId(participant.id)
+    setEditGamesPlayed(participant.gamesPlayed)
+  }
+
+  const cancelEditingGames = () => {
+    setEditingGamesId(null)
+    setEditGamesPlayed(0)
+  }
+
   const saveSkillLevel = (participant: Participant) => {
     const updatedParticipant: Participant = {
       ...participant,
@@ -83,6 +95,26 @@ export function ParticipantManager() {
     dispatch({ type: "UPDATE_PARTICIPANT", payload: updatedParticipant })
     setEditingId(null)
     setEditSkillLevel(5)
+  }
+
+  const saveGamesPlayed = (participant: Participant) => {
+    const updatedParticipant: Participant = {
+      ...participant,
+      gamesPlayed: Math.max(0, editGamesPlayed), // 確保不會是負數
+    }
+    
+    // 檢查是否有場次變化
+    const hasGamesChanged = participant.gamesPlayed !== updatedParticipant.gamesPlayed
+    
+    dispatch({ type: "UPDATE_PARTICIPANT", payload: updatedParticipant })
+    setEditingGamesId(null)
+    setEditGamesPlayed(0)
+    
+    // 如果場次有變化，提示用戶
+    if (hasGamesChanged) {
+      // 可以添加 toast 通知或其他提示
+      console.log(`${participant.name} 的場次已更新，當前分隊將被重置`)
+    }
   }
 
   const getSkillLevelColor = (level: number) => {
@@ -256,7 +288,50 @@ export function ParticipantManager() {
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-muted-foreground">已參與場次:</span>
-                        <span className="text-sm font-medium">{participant.gamesPlayed}</span>
+                        {editingGamesId === participant.id ? (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <Input
+                                type="number"
+                                min="0"
+                                value={editGamesPlayed}
+                                onChange={(e) => setEditGamesPlayed(Number.parseInt(e.target.value) || 0)}
+                                className="w-16 h-8 text-sm"
+                              />
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => saveGamesPlayed(participant)}
+                                className="text-green-600 hover:text-green-600 hover:bg-green-600/10 p-1 h-8 w-8"
+                              >
+                                <Check className="w-3 h-3" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={cancelEditingGames}
+                                className="text-red-600 hover:text-red-600 hover:bg-red-600/10 p-1 h-8 w-8"
+                              >
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                            <div className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded border">
+                              注意：修改場次會重置當前分隊
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">{participant.gamesPlayed}</span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => startEditingGames(participant)}
+                              className="text-primary hover:text-primary hover:bg-primary/10 p-1 h-8 w-8"
+                            >
+                              <Edit className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </CardContent>

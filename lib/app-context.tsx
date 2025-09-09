@@ -127,9 +127,17 @@ function appReducer(state: AppState, action: AppAction): AppState {
         },
       }
     case "UPDATE_PARTICIPANT":
+      const updatedParticipants = state.participants.map((p) => (p.id === action.payload.id ? action.payload : p))
+      
+      // 檢查是否有參與者的 gamesPlayed 被修改
+      const originalParticipant = state.participants.find(p => p.id === action.payload.id)
+      const gamesPlayedChanged = originalParticipant && originalParticipant.gamesPlayed !== action.payload.gamesPlayed
+      
       return {
         ...state,
-        participants: state.participants.map((p) => (p.id === action.payload.id ? action.payload : p)),
+        participants: updatedParticipants,
+        // 如果場次數據被修改，清空當前分配以觸發重新分隊
+        currentAllocations: gamesPlayedChanged ? [] : state.currentAllocations,
       }
     case "SET_COURTS":
       return {
@@ -178,7 +186,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
       const currentRound = Math.floor((state.currentGameNumber - 1) / activeCourts.length) + 1
       
       // 更新參與該場地遊戲的玩家統計
-      const updatedParticipants = state.participants.map(p => {
+      const updatedParticipantsAfterGame = state.participants.map(p => {
         const wasPlayingOnThisCourt = courtAllocation.players.some(player => player.id === p.id)
         
         if (wasPlayingOnThisCourt) {
@@ -193,7 +201,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
       
       return {
         ...state,
-        participants: updatedParticipants,
+        participants: updatedParticipantsAfterGame,
       }
       
     case "ADJUST_ROTATION_PRIORITY": // 處理手動調整輪換優先級

@@ -82,11 +82,35 @@ export function CourtDisplay() {
         return
       }
 
-      const newAllocation = algorithm.allocateTeams(availableParticipants, [singleCourt], state.currentGameNumber)
+      let newAllocation = algorithm.allocateTeams(availableParticipants, [singleCourt], state.currentGameNumber)
       
+      // 如果正常分隊失敗，嘗試強制分隊
       if (newAllocation.length === 0) {
-        alert("該場地分隊失敗，可能是因為場次差距限制")
-        return
+        // 強制分隊：優先選擇打球次數較少的參與者
+        if (availableParticipants.length >= 4) {
+          // 按打球次數排序，優先選擇打球較少的
+          const sortedParticipants = [...availableParticipants].sort((a, b) => {
+            if (a.gamesPlayed !== b.gamesPlayed) {
+              return a.gamesPlayed - b.gamesPlayed // 打球次數少的優先
+            }
+            return 0
+          })
+          const forcedPlayers = sortedParticipants.slice(0, 4)
+          const averageSkillLevel = forcedPlayers.reduce((sum, p) => sum + p.skillLevel, 0) / forcedPlayers.length
+          
+          newAllocation = [{
+            courtId: singleCourt.id,
+            courtName: singleCourt.name,
+            players: forcedPlayers,
+            averageSkillLevel: Math.round(averageSkillLevel * 10) / 10,
+            gameNumber: state.currentGameNumber,
+          }]
+          
+          alert("⚠️ 警告：分隊時超出場次差距限制，但已強制完成分隊")
+        } else {
+          alert("沒有足夠的可用參與者進行分隊")
+          return
+        }
       }
 
       // 合併新分配到現有分配中
