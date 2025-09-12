@@ -24,6 +24,50 @@ interface TeamPairingRecord {
 }
 
 export class TeamAllocationAlgorithm {
+
+  /**
+   * 強制輪換選擇 - 專門處理第一輪內的變化
+   */
+  private forceFirstRoundRotation(remainingPlayers: PlayerWithPriority[], gameNumber: number, courtsCount: number): PlayerWithPriority[] {
+    const currentRound = this.calculateRound(gameNumber, courtsCount)
+    
+    // 只在第一輪內應用
+    if (currentRound !== 1) {
+      return remainingPlayers
+    }
+    
+    // 如果是第一場，正常返回
+    if (gameNumber === 1) {
+      return remainingPlayers
+    }
+    
+    // 獲取第一輪內已使用的玩家
+    const usedPlayersInRound = new Set<string>()
+    const roundStart = (currentRound - 1) * courtsCount + 1
+    
+    for (let prevGame = roundStart; prevGame < gameNumber; prevGame++) {
+      const teamKey = this.getLastUsedTeamKey(prevGame)
+      if (teamKey) {
+        teamKey.split('-').forEach(id => usedPlayersInRound.add(id))
+      }
+    }
+    
+    // 優先選擇未在本輪使用過的玩家
+    const unusedPlayers = remainingPlayers.filter(p => !usedPlayersInRound.has(p.id))
+    const usedPlayers = remainingPlayers.filter(p => usedPlayersInRound.has(p.id))
+    
+    // 如果有足夠的未使用玩家，優先使用他們
+    if (unusedPlayers.length >= 4) {
+      return [...unusedPlayers, ...usedPlayers]
+    } else {
+      // 混合使用，但優先選擇未使用的
+      return [...unusedPlayers, ...usedPlayers]
+    }
+  }
+
+  
+  // 修正標記
+  private _isEnhancedVersion = true
   private constraints: AllocationConstraints = {
     maxSkillLevelDifference: 3, // 兩隊等級總合不能差異超過3級
     playersPerCourt: 4,
@@ -230,13 +274,13 @@ export class TeamAllocationAlgorithm {
         const roundsSinceLastPlay = currentRound - participant.lastPlayedRound
         if (roundsSinceLastPlay === 0) {
           // 剛剛才上場，大幅降低優先級避免連續上場
-          priorityScore += 5000 // 大幅增強懲罰力度，幾乎排除連續上場可能性
+          priorityScore += 2000 // 增強懲罰力度
         } else if (roundsSinceLastPlay === 1) {
-          // 上一輪上場，也給予較重懲罰
-          priorityScore += 1500 // 增強懲罰
+          // 上一輪上場，也給予一定懲罰
+          priorityScore += 500
         } else if (roundsSinceLastPlay >= 2) {
-          // 已經等待很久，大幅提高優先級
-          priorityScore -= 800 // 增強獎勵
+          // 已經等待很久，提高優先級
+          priorityScore -= 300 // 增強獎勵
         }
       }
       
@@ -268,6 +312,11 @@ export class TeamAllocationAlgorithm {
         priorityScore += gameBasedRotationFactor * 5 // 增強輪換效果
       } else if (hasUnplayedPlayers) {
         priorityScore += gameBasedRotationFactor * 3 // 其他情況適中加強
+      } else {
+        priorityScore += gameBasedRotationFactor
+      } * 3 // 第一輪內加強輪換效果
+      } else if (hasUnplayedPlayers) {
+        priorityScore += gameBasedRotationFactor * 2 // 其他情況適中加強
       } else {
         priorityScore += gameBasedRotationFactor
       }
@@ -342,94 +391,7 @@ export class TeamAllocationAlgorithm {
   }
 
   /**
-   * 新增：強化的隊伍輪換選擇機制
-   * 確保與同輪次和前一輪的隊伍組合都不相同
-   */
-  private selectTeamWithEnhancedRotation(
-    remainingPlayers: PlayerWithPriority[], 
-    gameNumber: number, 
-    courtsCount: number,
-    sameRoundTeams: Set<string>,
-    previousGamePlayers: Set<string>
-  ): PlayerWithPriority[] {
-    // 策略1：優先選擇在當前輪次還未上場的玩家
-    const notInCurrentRound = remainingPlayers.filter(p => !previousGamePlayers.has(p.id))
-    if (notInCurrentRound.length >= 4) {
-      const selected = notInCurrentRound
-        .sort((a, b) => a.priorityScore - b.priorityScore)
-        .slice(0, 4)
-      
-      // 檢查這個組合是否在同輪次已經使用過
-      const teamKey = this.generateTeamKey(selected.map(p => p.id))
-      if (!sameRoundTeams.has(teamKey)) {
-        return selected
-      }
-    }
-    
-    // 策略2：如果策略1失敗，使用多元化選擇
-    const maxAttempts = 10
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const candidates = this.selectWithVariation(remainingPlayers, gameNumber, attempt)
-      if (candidates.length >= 4) {
-        const teamKey = this.generateTeamKey(candidates.slice(0, 4).map(p => p.id))
-        if (!sameRoundTeams.has(teamKey)) {
-          return candidates.slice(0, 4)
-        }
-      }
-    }
-    
-    // 策略3：最後的備用方案 - 使用優先級排序但嘗試避免重複
-    const sortedByPriority = [...remainingPlayers].sort((a, b) => a.priorityScore - b.priorityScore)
-    
-    // 嘗試不同的起始位置
-    for (let offset = 0; offset < Math.min(4, sortedByPriority.length); offset++) {
-      const candidates = []
-      for (let i = 0; i < sortedByPriority.length && candidates.length < 4; i++) {
-        const index = (offset + i) % sortedByPriority.length
-        candidates.push(sortedByPriority[index])
-      }
-      
-      if (candidates.length >= 4) {
-        const teamKey = this.generateTeamKey(candidates.slice(0, 4).map(p => p.id))
-        if (!sameRoundTeams.has(teamKey)) {
-          return candidates.slice(0, 4)
-        }
-      }
-    }
-    
-    // 如果所有嘗試都失敗，返回優先級最高的玩家
-    return sortedByPriority.slice(0, 4)
-  }
-  
-  /**
-   * 新增：變化選擇策略
-   */
-  private selectWithVariation(players: PlayerWithPriority[], gameNumber: number, variation: number): PlayerWithPriority[] {
-    const strategies = [
-      // 策略1: 按優先級選擇
-      () => players.sort((a, b) => a.priorityScore - b.priorityScore),
-      // 策略2: 按等待時間選擇
-      () => players.sort((a, b) => b.waitingGames - a.waitingGames),
-      // 策略3: 按場次數選擇
-      () => players.sort((a, b) => a.gamesPlayed - b.gamesPlayed),
-      // 策略4: 基於遊戲編號的偽隨機選擇
-      () => {
-        const shuffled = [...players]
-        for (let i = shuffled.length - 1; i > 0; i--) {
-          const seed = gameNumber * 37 + variation * 19 + i * 13
-          const j = seed % (i + 1)
-          ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
-        }
-        return shuffled
-      }
-    ]
-    
-    const strategy = strategies[variation % strategies.length]
-    return strategy()
-  }
-  
-  /**
-   * 強制輪換選擇，確保與上一場不同 (保留原有功能以兼容性)
+   * 強制輪換選擇，確保與上一場不同
    */
   private selectWithRotationForced(remainingPlayers: PlayerWithPriority[], gameNumber: number): PlayerWithPriority[] {
     // 基於遊戲編號的偽隨機選擇，但確保與上一場不同
@@ -468,7 +430,6 @@ export class TeamAllocationAlgorithm {
 
   /**
    * 檢查同樣4個人是否在同一場地連續打兩場
-   * 修正版：更嚴格的連續場地檢測，確保隊伍輪換
    * @param playerIds 玩家ID陣列
    * @param courtId 場地ID  
    * @param gameNumber 當前場次
@@ -484,44 +445,27 @@ export class TeamAllocationAlgorithm {
     if (gameNumber <= 1) return false
 
     const teamKey = this.generateTeamKey(playerIds)
-    const currentRound = this.calculateRound(gameNumber, courtsCount)
-    
-    // 檢查該團隊的使用記錄
     const record = this.teamPairingHistory.get(teamKey)
     
-    if (record && record.lastUsedGame && record.lastUsedCourt) {
-      const lastGameRound = this.calculateRound(record.lastUsedGame, courtsCount)
-      
-      // 強化檢查1：同一輪次內不能重複使用相同隊伍
-      if (currentRound === lastGameRound) {
-        return true // 同輪次內禁止相同隊伍
-      }
-      
-      // 強化檢查2：連續場次檢查 (上一場 + 1 = 當前場)
-      const isConsecutiveGame = (record.lastUsedGame + 1 === gameNumber)
-      
-      if (isConsecutiveGame) {
-        // 檢查是否在同一場地 - 直接比較場地ID
-        const isSameCourt = (record.lastUsedCourt === courtId)
-        
-        if (isSameCourt) return true
-        
-        // 檢查場地位置：如果場地在輪次中的位置相同，也算連續
-        const currentCourtPosition = ((gameNumber - 1) % courtsCount)
-        const lastGameCourtPosition = ((record.lastUsedGame - 1) % courtsCount)
-        
-        if (currentCourtPosition === lastGameCourtPosition) return true
-      }
-      
-      // 強化檢查3：在少數玩家情況下，避免太快重複相同組合
-      // 如果上一場剛使用過，且間隔場次不足，則避免重複
-      const gamesSinceLastUse = gameNumber - record.lastUsedGame
-      if (gamesSinceLastUse <= courtsCount) {
-        return true // 間隔太短，避免重複
-      }
-    }
+    if (!record || !record.lastUsedGame || !record.lastUsedCourt) return false
+
+    // 檢查是否是連續場次 (上一場 + 1 = 當前場)
+    const isConsecutiveGame = (record.lastUsedGame + 1 === gameNumber)
     
-    return false
+    if (!isConsecutiveGame) return false
+    
+    // 檢查是否在同一場地 - 直接比較場地ID
+    const isSameCourt = (record.lastUsedCourt === courtId)
+    
+    if (isSameCourt) return true
+    
+    // 額外檢查：如果場地ID不同但是對應到相同的物理位置
+    // 計算場地在輪次中的位置
+    const currentCourtPosition = ((gameNumber - 1) % courtsCount)
+    const lastGameCourtPosition = ((record.lastUsedGame - 1) % courtsCount)
+    
+    // 如果兩個場次在各自輪次中是相同的場地位置，也算連續
+    return currentCourtPosition === lastGameCourtPosition
   }
 
   /**
@@ -562,14 +506,15 @@ export class TeamAllocationAlgorithm {
       // 檢查是否有人從未上場過
       const unplayedPlayers = remainingPlayers.filter(p => p.gamesPlayed === 0)
       
-      // 強化檢查上一場和同輪次的參賽者（避免連續上場和隊伍重複）  
+      // 檢查上一場的參賽者（避免連續上場）  
       const previousGamePlayers = new Set<string>()
-      const sameRoundTeams = new Set<string>()
-      
       if (gameNumber > 1) {
-        // 在同輪次內強制隊伍變化：檢查當前輪次所有已分配場次
-        const currentRound = this.calculateRound(gameNumber, courts.length)
-        const roundStart = (currentRound - 1) * courts.length + 1
+        // 在同輪次內強制隊伍變化：直接檢查上一場的參賽者
+        // 這對於8人2場地的情況特別重要
+        
+        // 修正版：不只檢查上一場，還要檢查同一輪內所有場次
+        const currentRound = this.calculateRound(gameNumber, courtsCount)
+        const roundStart = (currentRound - 1) * courtsCount + 1
         
         // 檢查當前輪次內所有已分配的場次
         for (let prevGameInRound = roundStart; prevGameInRound < gameNumber; prevGameInRound++) {
@@ -577,32 +522,21 @@ export class TeamAllocationAlgorithm {
           if (previousTeamKey) {
             const previousPlayerIds = previousTeamKey.split('-')
             previousPlayerIds.forEach(id => previousGamePlayers.add(id))
-            sameRoundTeams.add(previousTeamKey) // 記錄同輪次已使用的隊伍組合
           }
         }
-        
-        // 額外檢查：避免與前一輪次相同的隊伍組合
-        if (currentRound > 1) {
-          const prevRoundStart = (currentRound - 2) * courts.length + 1
-          const prevRoundEnd = (currentRound - 1) * courts.length
-          
-          for (let prevRoundGame = prevRoundStart; prevRoundGame <= prevRoundEnd; prevRoundGame++) {
-            const prevRoundTeamKey = this.getLastUsedTeamKey(prevRoundGame)
-            if (prevRoundTeamKey) {
-              sameRoundTeams.add(prevRoundTeamKey) // 前一輪的隊伍也要避免立即重複
-            }
-          }
         }
       }
       
-      // 強化的選擇策略：確保隊伍變化和輪換公平
+      // 選擇策略：確保隊伍變化 - 修正版
+      
+      // 應用第一輪強制輪換
+      remainingPlayers = this.forceFirstRoundRotation(remainingPlayers, gameNumber, courts.length)
       if (unplayedPlayers.length > 0) {
         // 有未上場玩家時，優先選擇他們
         eligiblePlayers = [...unplayedPlayers.sort((a, b) => a.priorityScore - b.priorityScore)]
         
         // 如果未上場玩家不足4人，從已上場玩家中補充
         if (eligiblePlayers.length < this.constraints.playersPerCourt) {
-          // 優先選擇還未在當前輪次上場的玩家
           const availablePlayedPlayers = remainingPlayers
             .filter(p => p.gamesPlayed > 0)
             .filter(p => !previousGamePlayers.has(p.id))
@@ -613,7 +547,7 @@ export class TeamAllocationAlgorithm {
             eligiblePlayers.push(player)
           }
           
-          // 最後才考慮當前輪次已上場的玩家（但要避免重複組合）
+          // 最後才考慮當前輪次已上場的玩家
           if (eligiblePlayers.length < this.constraints.playersPerCourt) {
             const currentRoundPlayers = remainingPlayers
               .filter(p => previousGamePlayers.has(p.id))
@@ -626,14 +560,27 @@ export class TeamAllocationAlgorithm {
           }
         }
       } else {
-        // 所有人都打過至少一場後，強制確保隊伍輪換
-        eligiblePlayers = this.selectTeamWithEnhancedRotation(
-          remainingPlayers, 
-          gameNumber, 
-          courts.length,
-          sameRoundTeams,
-          previousGamePlayers
-        )
+        // 所有人都打過至少一場後，強制選擇不同的組合
+        // 檢查是否有上一場的紀錄
+        const hasLastGameRecord = gameNumber > 1
+        
+        if (hasLastGameRecord) {
+          // 嘗試找到與上一場不同的組合
+          const differentCombinations = this.findDifferentCombinations(
+            remainingPlayers, 
+            gameNumber, 
+            courts.length
+          )
+          
+          if (differentCombinations.length >= this.constraints.playersPerCourt) {
+            eligiblePlayers = differentCombinations.slice(0, this.constraints.playersPerCourt)
+          } else {
+            // 如果找不到完全不同的組合，使用輪換策略確保變化
+            eligiblePlayers = this.selectWithRotationForced(remainingPlayers, gameNumber)
+          }
+        } else {
+          eligiblePlayers = sortedByPriority.slice(0, Math.max(this.constraints.playersPerCourt, remainingPlayers.length))
+        }
       }
       
       // 確保我們有足夠的玩家
@@ -652,34 +599,23 @@ export class TeamAllocationAlgorithm {
         return a.priorityScore - b.priorityScore
       })
 
-      // 嘗試多種組合，直到找到不違規的
-      let courtPlayers: Participant[] = []
-      let attempts = 0
-      const maxAttempts = 10
-      
-      while (attempts < maxAttempts && courtPlayers.length === 0) {
-        const candidatePlayers = this.selectBestTeam(eligiblePlayers, gameNumber, courts.length, attempts)
-        
-        if (candidatePlayers.length === this.constraints.playersPerCourt) {
-          const selectedPlayerIds = candidatePlayers.map(p => p.id)
-          
-          // 檢查同樣4個人是否在同一場地連續打兩場
-          const violatesConsecutiveRule = this.isConsecutiveSameTeamOnSameCourt(
-            selectedPlayerIds, 
-            court.id, 
-            gameNumber, 
-            courts.length
-          )
-          
-          if (!violatesConsecutiveRule) {
-            courtPlayers = candidatePlayers
-          }
-        }
-        attempts++
-      }
+      const courtPlayers = this.selectBestTeam(eligiblePlayers, gameNumber, courts.length)
       
       if (courtPlayers.length === this.constraints.playersPerCourt) {
         const selectedPlayerIds = courtPlayers.map(p => p.id)
+        
+        // 新增：檢查同樣4個人是否在同一場地連續打兩場
+        const violatesConsecutiveRule = this.isConsecutiveSameTeamOnSameCourt(
+          selectedPlayerIds, 
+          court.id, 
+          gameNumber, 
+          courts.length
+        )
+        
+        if (violatesConsecutiveRule) {
+          // 如果違反連續場地規則，跳過這個組合
+          continue
+        }
         
         // 雙重驗證：再次檢查分配後全體玩家的場次差距
         const allSelectedPlayerIds: string[] = []
@@ -753,35 +689,106 @@ export class TeamAllocationAlgorithm {
   /**
    * 選擇最佳的4人組合
    */
-  private selectBestTeam(eligiblePlayers: PlayerWithPriority[], gameNumber: number, courtsCount: number, attempt: number = 0): Participant[] {
+  private selectBestTeam(eligiblePlayers: PlayerWithPriority[], gameNumber: number, courtsCount: number): Participant[] {
     if (eligiblePlayers.length < 4) {
       return []
     }
     
-    // 根據嘗試次數調整選擇邏輯
-    const candidates = [...eligiblePlayers]
+    // 計算當前輪次（基於場地數量）
+    const currentRound = this.calculateRound(gameNumber, courtsCount)
     
-    // 使用嘗試次數來產生不同的組合
-    const seed = gameNumber * 37 + attempt * 19 + Date.now() % 100
-    
-    // 洗牌算法，根據種子產生不同的排列
-    for (let i = candidates.length - 1; i > 0; i--) {
-      const j = (seed * (i + 1) + attempt * 13) % (i + 1)
-      ;[candidates[i], candidates[j]] = [candidates[j], candidates[i]]
-    }
-    
-    // 嘗試不同的起始點來產生多種組合
-    const startIndex = attempt % Math.max(1, candidates.length - 3)
-    const combo = []
-    
-    for (let i = 0; i < candidates.length && combo.length < 4; i++) {
-      const index = (startIndex + i) % candidates.length
-      if (!combo.includes(candidates[index])) {
-        combo.push(candidates[index])
+    // 強制避免連續相同組合：檢查是否有上一場的4人組合
+    const filterConsecutiveCombinations = (candidates: PlayerWithPriority[]): PlayerWithPriority[] => {
+      if (gameNumber === 1) return candidates // 第一場沒有限制
+      
+      // 第一轮内必须更严格地避免相同组合
+      if (currentRound === 1) {
+        // 在第一轮内，绝对不允许完全相同的4人组合
+        const maxTries = Math.min(50, candidates.length)
+        
+        for (let i = 0; i < maxTries - 3; i++) {
+          for (let j = i + 1; j < maxTries - 2; j++) {
+            for (let k = j + 1; k < maxTries - 1; k++) {
+              for (let l = k + 1; l < maxTries; l++) {
+                const combo = [candidates[i], candidates[j], candidates[k], candidates[l]]
+                const playerIds = combo.map(p => p.id)
+                const teamKey = this.generateTeamKey(playerIds)
+                const record = this.teamPairingHistory.get(teamKey)
+                
+                // 第一轮内：如果这个组合从未使用过，立即返回
+                if (!record) {
+                  return combo
+                }
+              }
+            }
+          }
+        }
+        
+        // 第一轮内如果所有组合都用过，选择至少有2个不同玩家的组合
+        for (let i = 0; i < maxTries - 3; i++) {
+          for (let j = i + 1; j < maxTries - 2; j++) {
+            for (let k = j + 1; k < maxTries - 1; k++) {
+              for (let l = k + 1; l < maxTries; l++) {
+                const combo = [candidates[i], candidates[j], candidates[k], candidates[l]]
+                const playerIds = combo.map(p => p.id)
+                
+                // 检查与上一场组合的重叠人数
+                const lastGameKey = this.getLastUsedTeamKey(gameNumber - 1)
+                if (lastGameKey) {
+                  const lastGamePlayerIds = lastGameKey.split('-')
+                  const overlapCount = playerIds.filter(id => lastGamePlayerIds.includes(id)).length
+                  
+                  // 第一轮内要求至少有2个不同的人
+                  if (overlapCount <= 2) {
+                    return combo
+                  }
+                }
+              }
+            }
+          }
+        }
       }
+      
+      // 其他情况的原有逻辑
+      const maxTries = Math.min(50, candidates.length)
+      for (let i = 0; i < maxTries - 3; i++) {
+        for (let j = i + 1; j < maxTries - 2; j++) {
+          for (let k = j + 1; k < maxTries - 1; k++) {
+            for (let l = k + 1; l < maxTries; l++) {
+              const combo = [candidates[i], candidates[j], candidates[k], candidates[l]]
+              const playerIds = combo.map(p => p.id)
+              const teamKey = this.generateTeamKey(playerIds)
+              const record = this.teamPairingHistory.get(teamKey)
+              
+              if (!record || record.lastUsedGame !== gameNumber - 1) {
+                return combo
+              }
+            }
+          }
+        }
+      }
+      
+      // 如果找不到不重複的組合，返回原始候選者（避免死鎖）
+      return candidates.slice(0, 4)
     }
     
-    return combo
+    eligiblePlayers = filterConsecutiveCombinations(eligiblePlayers)
+    
+    // 找出必須上場的玩家（第二輪未達到最低場次的）
+    const mustPlayByRound2 = eligiblePlayers.filter(p => 
+      currentRound >= 2 && p.gamesPlayed < this.constraints.minGamesInRound2
+    )
+    
+    if (mustPlayByRound2.length >= 4) {
+      // 如果第二輪規則的人數≥4，優先選擇他們，但避免重複組合
+      return this.selectFromMustPlayPlayersWithVariation(mustPlayByRound2, gameNumber)
+    } else if (mustPlayByRound2.length > 0) {
+      // 如果有部分人必須第二輪上場，確保他們都被包含
+      return this.selectWithMustPlayPlayers(mustPlayByRound2, eligiblePlayers)
+    }
+    
+    // 沒有特別的第二輪限制時，嘗試選擇更多樣化的組合
+    return this.selectDiverseTeam(eligiblePlayers, gameNumber)
   }
 
   /**

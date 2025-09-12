@@ -32,11 +32,21 @@ export function TeamAllocation() {
     try {
       const allocations = algorithm.allocateTeams(state.participants, state.courts, state.currentGameNumber)
 
+      if (allocations.length === 0) {
+        throw new Error("無法生成有效的分隊組合，請檢查參與者數量和場地設置")
+      }
+
       // 驗證分隊結果
       const validations = allocations.map((allocation) => ({
         courtId: allocation.courtId,
         ...algorithm.validateAllocation(allocation),
       }))
+
+      // 檢查是否有驗證失敗的分配
+      const hasValidationErrors = validations.some(v => !v.isValid)
+      if (hasValidationErrors) {
+        console.warn("分隊結果包含驗證錯誤:", validations.filter(v => !v.isValid))
+      }
 
       // 計算統計信息
       const stats = algorithm.getAllocationStats(allocations)
@@ -46,6 +56,9 @@ export function TeamAllocation() {
       setAllocationStats(stats)
     } catch (error) {
       console.error("分隊演算法執行失敗:", error)
+      // 向用戶顯示更具體的錯誤信息
+      const errorMessage = error instanceof Error ? error.message : '請稍後再試'
+      alert(`分隊過程中發生錯誤：${errorMessage}`)
     } finally {
       setIsAllocating(false)
     }
@@ -95,7 +108,7 @@ export function TeamAllocation() {
             <Alert>
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>
-                分隊演算法將確保：1) 第二輪時所有人至少上場1次 2) 場次差距不超過1 3) 各場地實力盡量均衡
+                分隊演算法將確保：1) 所有人都要先打過1場才能開始打第二場 2) 場次差距不超過1 3) 各場地實力盡量均衡
               </AlertDescription>
             </Alert>
 
