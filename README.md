@@ -10,6 +10,7 @@
 - **智慧分隊**：基於技能等級和公平性原則的自動分隊算法
 - **視覺化場地**：羽球場圖案顯示，清楚展示每場比賽的對陣情況
 - **比賽統計**：追蹤每位參與者的比賽場數和輪次記錄
+- **遊戲歷史記錄**：記錄所有比賽分配歷史和統計數據
 
 ### 🔥 亮點功能
 - **場地獨立管理**：每個場地可單獨開始比賽，互不干擾
@@ -17,6 +18,8 @@
 - **持續顯示**：分隊結果會持續顯示直到下一輪開始
 - **智能按鈕**：按鈕文字根據場地狀態動態調整
 - **公平輪換**：優先安排比賽場次較少的參與者
+- **優先級分配系統**：使用先進的優先級評分算法確保公平性
+- **防連續出場機制**：避免玩家連續多場比賽，確保適當休息
 
 ## 🚀 快速開始
 
@@ -82,26 +85,41 @@
 ### 項目結構
 ```
 badminton-team-app/
-├── app/                    # Next.js App Router
-│   ├── layout.tsx         # 全局布局
-│   ├── page.tsx           # 主頁面
-│   └── globals.css        # 全局樣式
-├── components/            # React組件
-│   ├── ui/               # 基礎UI組件
+├── app/                           # Next.js App Router
+│   ├── layout.tsx                # 全局布局
+│   ├── page.tsx                  # 主頁面
+│   ├── api/participants/         # API 路由
+│   └── globals.css               # 全局樣式
+├── components/                   # React組件
+│   ├── ui/                      # 基礎UI組件 (50+ Shadcn/ui 組件)
 │   ├── participant-manager.tsx  # 參與者管理
-│   └── court-display.tsx        # 場地顯示
-├── lib/                  # 工具函數和邏輯
-│   ├── app-context.tsx   # 全局狀態管理
-│   └── team-allocation-algorithm.ts  # 分隊算法
-└── README.md
+│   ├── court-display.tsx        # 場地顯示
+│   ├── court-manager.tsx        # 場地管理器
+│   ├── team-allocation.tsx      # 分隊組件
+│   ├── game-schedule.tsx        # 遊戲排程
+│   ├── rotation-manager.tsx     # 輪換管理
+│   └── security-dashboard.tsx   # 安全控制面板
+├── lib/                         # 工具函數和邏輯
+│   ├── app-context.tsx          # 全局狀態管理
+│   ├── team-allocation-algorithm.ts        # 核心分隊算法
+│   ├── team-allocation-algorithm-enhanced.ts # 增強版算法
+│   ├── security.ts              # 安全功能
+│   └── utils.ts                 # 工具函數
+├── hooks/                       # React Hooks
+├── scripts/                     # 建構腳本
+├── middleware.ts                # Next.js 中間件
+└── 多個測試文件 (*.js)           # 演算法測試和驗證
 ```
 
 ### 核心算法
 **智慧分隊算法特點**：
-- 基於技能等級平衡
-- 考慮參與者的比賽場次公平性
-- 支持輪換機制，避免長時間等待
-- 技能等級差距控制在合理範圍內
+- **優先級評分系統**：綜合考慮場次數量、等待時間、輪次規則等因素
+- **公平性保證**：確保所有參與者的比賽場次差距控制在合理範圍內（≤1場）
+- **技能平衡**：兩隊技能等級總和差異不超過3級
+- **防連續出場**：避免玩家連續多場比賽，確保適當休息
+- **組合記憶**：記錄4人組合歷史，避免重複配對
+- **動態輪次計算**：基於場地數量自動計算輪次
+- **全面測試驗證**：包含50+個測試案例確保算法穩定性
 
 ## ⚙️ 配置說明
 
@@ -112,9 +130,12 @@ badminton-team-app/
 
 ### 分隊規則
 - 每場比賽4人（2vs2）
-- 技能等級差距不超過2級
+- 兩隊技能等級總和差異不超過3級
+- 參與者間比賽場次差距不超過1場
 - 優先安排比賽場次較少的參與者
-- 支持手動調整輪換優先級
+- 每兩輪必須讓所有人至少上場一次
+- 防止玩家連續在相同場地出場
+- 記錄和避免重複的4人組合配對
 
 ## 🎮 使用場景
 
@@ -160,6 +181,22 @@ npm run start
 npm run lint
 ```
 
+### 測試與驗證
+項目包含大量測試文件來驗證算法正確性：
+```bash
+# 運行主要算法測試
+node test-allocation.js
+
+# 運行綜合測試
+node comprehensive-test.js
+
+# 運行連續出場檢測測試
+node test-consecutive-final-solution.js
+
+# 運行公平性測試
+node test-initial-fairness.js
+```
+
 ### 環境變數
 目前版本無需額外環境變數配置。
 
@@ -184,6 +221,22 @@ npm run lint
 4. 推送到分支 (`git push origin feature/AmazingFeature`)
 5. 開啟 Pull Request
 
+## 📊 項目特色
+
+### 算法優化歷程
+本項目經歷了多次重要的算法改進：
+1. **初版算法**：基礎的技能平衡和場次控制
+2. **公平性優化**：解決場次分配不均問題
+3. **優先級系統**：引入綜合評分機制
+4. **連續出場防護**：避免玩家過度疲勞
+5. **全面測試**：50+ 測試案例覆蓋各種場景
+
+### 安全性功能
+- 輸入驗證和清理
+- 中間件安全檢查
+- 防XSS攻擊保護
+- 安全控制面板
+
 ## 📄 授權條款
 
 本專案採用 MIT 授權條款 - 詳見 [LICENSE](LICENSE) 文件
@@ -191,9 +244,11 @@ npm run lint
 ## 🙏 致謝
 
 - [Next.js](https://nextjs.org/) - React 框架
-- [Tailwind CSS](https://tailwindcss.com/) - CSS 框架
+- [Tailwind CSS](https://tailwindcss.com/) - CSS 框架  
 - [Shadcn/ui](https://ui.shadcn.com/) - UI 組件庫
 - [Lucide](https://lucide.dev/) - 圖標庫
+- [TypeScript](https://www.typescriptlang.org/) - 類型安全
+- [Radix UI](https://www.radix-ui.com/) - 無障礙UI組件
 
 ## 📞 聯繫方式
 
