@@ -10,6 +10,7 @@ import { Trash2, Plus, User, Edit, Check, X, UserX } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useAppContext, type Participant } from "@/lib/app-context"
 import { sanitizeParticipantData, participantSchema } from "@/lib/security"
+import { PlayerPreferences } from "@/components/player-preferences"
 
 export function ParticipantManager() {
   const { state, dispatch } = useAppContext()
@@ -332,6 +333,11 @@ export function ParticipantManager() {
                             </Button>
                           </div>
                         )}
+                      </div>
+                      
+                      {/* 偏好設定 */}
+                      <div className="pt-2 border-t">
+                        <PlayerPreferences participantId={participant.id} />
                       </div>
                     </div>
                   </CardContent>

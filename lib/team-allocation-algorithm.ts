@@ -298,6 +298,138 @@ export class TeamAllocationAlgorithm {
   }
 
   /**
+   * 檢查玩家組合的偏好兼容性
+   * @param players 要檢查的玩家陣列
+   * @returns 偏好評分（越高越好，負數表示有避免偏好）
+   */
+  private calculatePreferenceScore(players: Participant[]): number {
+    let score = 0
+    
+    // 檢查每對玩家之間的偏好設定
+    for (let i = 0; i < players.length; i++) {
+      const player1 = players[i]
+      
+      for (let j = i + 1; j < players.length; j++) {
+        const player2 = players[j]
+        
+        // 檢查 player1 對 player2 的偏好
+        const preference1 = player1.preferences.find(pref => pref.playerId === player2.id)
+        if (preference1) {
+          if (preference1.preference === 'preferred') {
+            score += 10 // 偏好配對加分
+          } else if (preference1.preference === 'avoided') {
+            score -= 50 // 避免配對大幅扣分
+          }
+        }
+        
+        // 檢查 player2 對 player1 的偏好
+        const preference2 = player2.preferences.find(pref => pref.playerId === player1.id)
+        if (preference2) {
+          if (preference2.preference === 'preferred') {
+            score += 10 // 偏好配對加分
+          } else if (preference2.preference === 'avoided') {
+            score -= 50 // 避免配對大幅扣分
+          }
+        }
+      }
+    }
+    
+    return score
+  }
+
+  /**
+   * 檢查玩家組合是否有嚴重的偏好衝突
+   * @param players 要檢查的玩家陣列
+   * @returns 如果有玩家明確避免與組合中其他玩家配對，返回 true
+   */
+  private hasPreferenceConflict(players: Participant[]): boolean {
+    for (let i = 0; i < players.length; i++) {
+      const player1 = players[i]
+      
+      for (let j = i + 1; j < players.length; j++) {
+        const player2 = players[j]
+        
+        // 檢查是否有任一方明確避免與對方配對
+        const hasAvoidance1 = player1.preferences.some(pref => 
+          pref.playerId === player2.id && pref.preference === 'avoided'
+        )
+        const hasAvoidance2 = player2.preferences.some(pref => 
+          pref.playerId === player1.id && pref.preference === 'avoided'
+        )
+        
+        if (hasAvoidance1 || hasAvoidance2) {
+          return true
+        }
+      }
+    }
+    
+    return false
+  }
+
+  /**
+   * 生成玩家組合（從 n 個玩家中選 k 個）
+   * @param players 可選擇的玩家陣列
+   * @param k 要選擇的玩家數量
+   * @returns 所有可能的 k 個玩家組合，按偏好分數排序
+   */
+  private generateCombinations(players: PlayerWithPriority[], k: number): PlayerWithPriority[][] {
+    if (k > players.length) return []
+    if (k === 1) return players.map(p => [p])
+    if (k === players.length) return [players]
+    
+    const combinations: PlayerWithPriority[][] = []
+    
+    // 限制組合數量以避免性能問題
+    const maxCombinations = Math.min(100, this.getCombinationCount(players.length, k))
+    
+    const generate = (start: number, current: PlayerWithPriority[]) => {
+      if (combinations.length >= maxCombinations) return
+      
+      if (current.length === k) {
+        combinations.push([...current])
+        return
+      }
+      
+      for (let i = start; i < players.length && combinations.length < maxCombinations; i++) {
+        current.push(players[i])
+        generate(i + 1, current)
+        current.pop()
+      }
+    }
+    
+    generate(0, [])
+    
+    // 按偏好分數和優先級分數排序
+    return combinations.sort((a, b) => {
+      const preferenceScoreA = this.calculatePreferenceScore(a)
+      const preferenceScoreB = this.calculatePreferenceScore(b)
+      
+      if (preferenceScoreA !== preferenceScoreB) {
+        return preferenceScoreB - preferenceScoreA // 偏好分數高的優先
+      }
+      
+      // 偏好分數相同時，按優先級分數排序
+      const priorityScoreA = a.reduce((sum, p) => sum + p.priorityScore, 0)
+      const priorityScoreB = b.reduce((sum, p) => sum + p.priorityScore, 0)
+      return priorityScoreA - priorityScoreB // 優先級分數低的優先
+    })
+  }
+
+  /**
+   * 計算組合數量 C(n,k)
+   */
+  private getCombinationCount(n: number, k: number): number {
+    if (k > n) return 0
+    if (k === 0 || k === n) return 1
+    
+    let result = 1
+    for (let i = 0; i < k; i++) {
+      result = result * (n - i) / (i + 1)
+    }
+    return Math.floor(result)
+  }
+
+  /**
    * 尋找與上一場不同的組合
    */
   private findDifferentCombinations(remainingPlayers: PlayerWithPriority[], gameNumber: number, courtsCount: number): PlayerWithPriority[] {
@@ -343,7 +475,7 @@ export class TeamAllocationAlgorithm {
 
   /**
    * 新增：強化的隊伍輪換選擇機制
-   * 確保與同輪次和前一輪的隊伍組合都不相同
+   * 確保與同輪次和前一輪的隊伍組合都不相同，並考慮玩家偏好
    */
   private selectTeamWithEnhancedRotation(
     remainingPlayers: PlayerWithPriority[], 
@@ -352,29 +484,40 @@ export class TeamAllocationAlgorithm {
     sameRoundTeams: Set<string>,
     previousGamePlayers: Set<string>
   ): PlayerWithPriority[] {
-    // 策略1：優先選擇在當前輪次還未上場的玩家
+    // 策略1：優先選擇在當前輪次還未上場的玩家，並考慮偏好
     const notInCurrentRound = remainingPlayers.filter(p => !previousGamePlayers.has(p.id))
     if (notInCurrentRound.length >= 4) {
-      const selected = notInCurrentRound
-        .sort((a, b) => a.priorityScore - b.priorityScore)
-        .slice(0, 4)
+      // 嘗試多種組合以找到最佳偏好匹配
+      const combinations = this.generateCombinations(notInCurrentRound, 4)
       
-      // 檢查這個組合是否在同輪次已經使用過
-      const teamKey = this.generateTeamKey(selected.map(p => p.id))
-      if (!sameRoundTeams.has(teamKey)) {
-        return selected
+      for (const combination of combinations) {
+        const teamKey = this.generateTeamKey(combination.map(p => p.id))
+        
+        // 檢查是否已在同輪次使用過
+        if (sameRoundTeams.has(teamKey)) continue
+        
+        // 檢查是否有嚴重偏好衝突
+        if (this.hasPreferenceConflict(combination)) continue
+        
+        return combination.sort((a, b) => a.priorityScore - b.priorityScore)
       }
     }
     
-    // 策略2：如果策略1失敗，使用多元化選擇
-    const maxAttempts = 10
+    // 策略2：如果策略1失敗，使用多元化選擇並考慮偏好
+    const maxAttempts = 20 // 增加嘗試次數以考慮偏好
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const candidates = this.selectWithVariation(remainingPlayers, gameNumber, attempt)
       if (candidates.length >= 4) {
-        const teamKey = this.generateTeamKey(candidates.slice(0, 4).map(p => p.id))
-        if (!sameRoundTeams.has(teamKey)) {
-          return candidates.slice(0, 4)
-        }
+        const team = candidates.slice(0, 4)
+        const teamKey = this.generateTeamKey(team.map(p => p.id))
+        
+        // 檢查是否已在同輪次使用過
+        if (sameRoundTeams.has(teamKey)) continue
+        
+        // 檢查偏好衝突，但在多次嘗試後放寬限制
+        if (attempt < 15 && this.hasPreferenceConflict(team)) continue
+        
+        return team
       }
     }
     

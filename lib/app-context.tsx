@@ -3,6 +3,12 @@
 import type React from "react"
 import { createContext, useContext, useReducer, type ReactNode } from "react"
 
+export interface PlayerPreference {
+  playerId: string
+  playerName: string
+  preference: 'preferred' | 'avoided' // 偏好或避免
+}
+
 export interface Participant {
   id: string
   name: string
@@ -10,6 +16,7 @@ export interface Participant {
   gamesPlayed: number
   lastPlayedRound: number // 添加最後參與輪次記錄
   rotationPriority: number // 添加輪換優先級
+  preferences: PlayerPreference[] // 玩家偏好設定
 }
 
 export interface Court {
@@ -63,23 +70,23 @@ type AppAction =
 const initialState: AppState = {
   participants: [
     // 5級玩家 (6個)
-    { id: "1", name: "玩家1", skillLevel: 5, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 0 },
-    { id: "2", name: "玩家2", skillLevel: 5, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 1 },
-    { id: "3", name: "玩家3", skillLevel: 5, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 2 },
-    { id: "4", name: "玩家4", skillLevel: 5, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 3 },
-    { id: "5", name: "玩家5", skillLevel: 5, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 4 },
-    { id: "6", name: "玩家6", skillLevel: 5, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 5 },
+    { id: "1", name: "玩家1", skillLevel: 5, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 0, preferences: [] },
+    { id: "2", name: "玩家2", skillLevel: 5, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 1, preferences: [] },
+    { id: "3", name: "玩家3", skillLevel: 5, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 2, preferences: [] },
+    { id: "4", name: "玩家4", skillLevel: 5, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 3, preferences: [] },
+    { id: "5", name: "玩家5", skillLevel: 5, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 4, preferences: [] },
+    { id: "6", name: "玩家6", skillLevel: 5, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 5, preferences: [] },
     // 9級玩家 (3個)
-    { id: "7", name: "玩家7", skillLevel: 9, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 6 },
-    { id: "8", name: "玩家8", skillLevel: 9, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 7 },
-    { id: "9", name: "玩家9", skillLevel: 9, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 8 },
+    { id: "7", name: "玩家7", skillLevel: 9, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 6, preferences: [] },
+    { id: "8", name: "玩家8", skillLevel: 9, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 7, preferences: [] },
+    { id: "9", name: "玩家9", skillLevel: 9, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 8, preferences: [] },
     // 2級玩家 (3個)
-    { id: "10", name: "玩家10", skillLevel: 2, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 9 },
-    { id: "11", name: "玩家11", skillLevel: 2, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 10 },
-    { id: "12", name: "玩家12", skillLevel: 2, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 11 },
+    { id: "10", name: "玩家10", skillLevel: 2, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 9, preferences: [] },
+    { id: "11", name: "玩家11", skillLevel: 2, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 10, preferences: [] },
+    { id: "12", name: "玩家12", skillLevel: 2, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 11, preferences: [] },
     // 7級玩家 (2個)
-    { id: "13", name: "玩家13", skillLevel: 7, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 12 },
-    { id: "14", name: "玩家14", skillLevel: 7, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 13 },
+    { id: "13", name: "玩家13", skillLevel: 7, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 12, preferences: [] },
+    { id: "14", name: "玩家14", skillLevel: 7, gamesPlayed: 0, lastPlayedRound: 0, rotationPriority: 13, preferences: [] },
   ],
   courts: [
     { id: "1", name: "場地 1", isActive: true, currentPlayers: [] },
@@ -107,6 +114,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
             ...action.payload,
             lastPlayedRound: 0, // 初始化新參與者的輪換相關字段
             rotationPriority: state.participants.length,
+            preferences: [], // 初始化偏好設定為空陣列
           },
         ],
       }
